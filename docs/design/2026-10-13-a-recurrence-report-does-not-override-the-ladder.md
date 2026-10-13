@@ -12,6 +12,10 @@ Keep recurrence detection and reporting, but do not let a historical `stopLineCa
 
 The predicate is the same fact `repair-entry.ts` decides when it admits a repair: a blocking finding at the tier's bar, or a major one where the tier blocks on major findings. Where it holds, the recurrence branches still route and still name their own reason (a class recurring inside a repair says more than one id repeating); where it does not, the recurrence stays a published reading and the ladder's own branch decides.
 
+**Both conjuncts of the branch conditions survive, including the phase.** The branches used to read `phase === 'review' && <diagnostic>`, and the first version of this change replaced that conjunct with the new predicate — so a recurrence in `judge` or `hardVerify` would have been routed by a rule about reviews, where the authority is `authorizeJudgeRepair` / `authorizeVerifyRepair` and their preconditions differ. Measured by an independent verifier as a *file:line* observation, then reproduced here as a failing case: `phase: 'judge'` with a blocking finding and a live recurrence answered `/kata-build` `review_class_recurring`. The guard is back on both branches, and each branch has its own case for it — the first version asserted the guard through the class route alone, so removing the id route's conjunct stayed green.
+
+**Two of this change's own guards were decorative until an independent verifier said so.** It mutated the predicate down to its blocking half and every selector it tried stayed green: nothing asked the admission question in a state that was *both* recurring and major-only, so the `strict`-blocks-on-major half could have been deleted without a reading. Both halves are now exercised, and the two mutations (drop the major half; drop each phase guard) are declared falsifiers.
+
 ## Acceptance and tests
 
 - **AC-1:** Recurrence remains visible in diagnostics but cannot route a current, otherwise-repair-free review to Build.

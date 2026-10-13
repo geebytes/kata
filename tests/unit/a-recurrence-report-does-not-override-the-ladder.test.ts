@@ -44,7 +44,7 @@ interface Fixture {
 }
 
 async function fixtureWith(
-    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding'; rounds?: ReviewRound[]; phase?: Phase } = {},
+    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding' | 'major-finding'; rounds?: ReviewRound[]; phase?: Phase } = {},
 ): Promise<Fixture> {
     const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
     roots.push(root);
@@ -76,6 +76,11 @@ async function fixtureWith(
     if (options.reviewRecord === 'blocking-finding') {
         // A finding bound to the sealed revision: the state where the ladder does admit a repair.
         await writeFile(reviewPath(root, taskId), `${JSON.stringify({ ...binding, status: 'pending', findings: [{ id: 'C-1', taskId, severity: 'blocking', message: 'the current content is wrong', falsifies: 'the route admits a repair here' }] })}\n`);
+    }
+    if (options.reviewRecord === 'major-finding') {
+        // A `major` finding and nothing at `blocking`: under `strict` the ladder blocks on it too, which is the half of the
+        // admission rule a recurrence state never asked about until an independent verifier measured it.
+        await writeFile(reviewPath(root, taskId), `${JSON.stringify({ ...binding, status: 'pending', findings: [{ id: 'M-1', taskId, severity: 'major', message: 'a major problem in the current content', falsifies: 'the route admits a repair here' }] })}\n`);
     }
     if (options.phase !== undefined) {
         // The recorded phase is what the entrypoint reads: the router is asked about the state the task is actually in.
@@ -168,5 +173,49 @@ describe('a recurrence report does not override the ladder', () => {
         const admitting = await fixtureWith({ reviewRecord: 'blocking-finding', phase: 'review' });
         const admittingStatus = await runLocalStatusCommand(taskId, { taskId, source: 'active' }, admitting.root, { withContext: false });
         expect(admittingStatus.nextAction).toMatchObject({ nextSkill: '/kata-build', reason: 'review_class_recurring' });
+    });
+
+    it('AC-4: the major half of the admission rule is load-bearing, not decoration', async () => {
+        // **Measured by an independent verifier, not by me.** It mutated the predicate down to `blockingFindings > 0` — dropping
+        // the `strict`-blocks-on-major half — and every selector it tried stayed green, because no case asked the admission
+        // question in a state that was *both* recurring and major-only. A predicate whose second half nothing exercises is a
+        // predicate that can be deleted without a reading, so the state is asked here.
+        const { summary } = await fixtureWith({ reviewRecord: 'major-finding' });
+        expect(summary.majorFindings).toBeGreaterThan(0);
+        expect(summary.blockingFindings).toBe(0);
+        expect(summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate)).toBe(true);
+
+        expect(suggestCandidateAction('review', summary)).toMatchObject({ nextSkill: '/kata-build', reason: 'review_class_recurring' });
+    });
+
+    it('AC-4: the recurrence routes keep the phase guard the ladder branches carry', async () => {
+        // **The same independent verifier's second finding, and a defect this change introduced.** Both branches used to read
+        // `phase === 'review' && …`; the rewrite replaced that conjunct with the new predicate, so a recurrence in any *other*
+        // phase would have been routed by a rule about reviews. In `judge` the authority is `authorizeJudgeRepair`, which
+        // requires a judge FAIL or a superseded revision — a different rule entirely.
+        const { summary } = await fixtureWith({ reviewRecord: 'blocking-finding', phase: 'judge' });
+        expect(summary.blockingFindings).toBeGreaterThan(0);
+        expect(summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate)).toBe(true);
+
+        const action = suggestCandidateAction('judge', summary);
+        expect(action.reason, JSON.stringify(action)).not.toBe('review_class_recurring');
+        expect(action.nextSkill).not.toBe('/kata-build');
+    });
+
+    it('AC-4: the id route keeps its phase guard too, and the guard is measured per branch', async () => {
+        // The class route's guard and the id route's guard are two sites of one rule, and the first version of this case only
+        // drove the class reading — so removing the id route's `phase === 'review'` conjunct stayed green (measured: M7). A
+        // guard asserted through its sibling is a guard nothing exercises.
+        const recurringIds = [
+            { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1 },
+            { at: '2', revisionId: 'rev-b', blockingIds: ['F-1'], blockingCount: 1 },
+        ];
+        const { summary } = await fixtureWith({ rounds: recurringIds, reviewRecord: 'blocking-finding', phase: 'judge' });
+        expect(summary.reviewLoopRecurrence, 'the id reading must be live for this case to mean anything').toEqual([{ id: 'F-1', revisions: ['rev-a', 'rev-b'] }]);
+        expect(summary.blockingFindings).toBeGreaterThan(0);
+
+        const action = suggestCandidateAction('judge', summary);
+        expect(action.reason, JSON.stringify(action)).not.toBe('review_loop_recurring');
+        expect(action.nextSkill).not.toBe('/kata-build');
     });
 });

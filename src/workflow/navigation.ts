@@ -728,7 +728,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // reads it" shape this whole change exists to close, measured by an independent round. It sits above the id-based route
   // because a class recurring inside a repair says more than one id repeating: the id view cannot see it at all (no id
   // repeated across the seven rounds that produced ten findings, seven of them in the previous round's repair).
-  if (ladderAdmitsRepair && (upstream.reviewLoopClassRecurrence ?? []).some((entry) => entry.stopLineCandidate)) {
+  if (phase === 'review' && ladderAdmitsRepair && (upstream.reviewLoopClassRecurrence ?? []).some((entry) => entry.stopLineCandidate)) {
     const candidates = (upstream.reviewLoopClassRecurrence as ClassRecurrence[]).filter((entry) => entry.stopLineCandidate);
     return {
       nextSkill: '/kata-build',
@@ -742,7 +742,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // finding keeps coming back even while each round's own count looks like steady progress. Nothing about what the gates
   // demand moved — a change that only recurs is still routed the way a change with a blocking finding always was, which is
   // why it carries the same admission as the class route above.
-  if (ladderAdmitsRepair && (upstream.reviewLoopRecurrence?.length ?? 0) > 0) {
+  if (phase === 'review' && ladderAdmitsRepair && (upstream.reviewLoopRecurrence?.length ?? 0) > 0) {
     return {
       nextSkill: '/kata-build',
       role: 'implementer',
