@@ -786,7 +786,7 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 command: 'ledger evidence add',
                 claims: read.submission.claims.length,
                 evidence: read.submission.evidence.length,
-                ...(unchanged.length > 0 ? { unchanged, unchangedNote: 'these ids were already recorded with this exact content, so nothing was written for them; `ledger evidence replace --reason <why>` is the command that rewrites a recorded item' } : {}),
+                ...(unchanged.length > 0 ? { unchanged, unchangedNote: 'these ids were already recorded with this exact content, so nothing was written for them; `ledger evidence replace --id <evidence-id> --file <item.json> --reason <why>` is the command that rewrites a recorded item' } : {}),
                 note: 'claims and evidence are written as they arrive; there is no submission document to lose',
             });
             return;

@@ -77,9 +77,13 @@ export interface AnchorProblem {
  * every one of them found by hand, and the ledger could have been asked "is this still aimed at something" at any point.
  *
  * The division of labour is deliberate and stated in the design document: **the seal asks whether the anchor still points at
- * something** (necessary, and cheap — a string match, no tests, no ledger dependency beyond reading the declaration), while
- * **`ledger evidence verify` asks whether it still reddens** (sufficient, and expensive). Neither replaces the other, and a
- * seal that could not seal without a readable ledger would make the ledger a gate on the change rather than a record of it.
+ * something** (necessary, and cheap — a string match over the declaration, no test run and no ledger *decision*), while
+ * **`ledger evidence verify` asks whether it still reddens** (sufficient, and expensive). Neither replaces the other: a
+ * unique anchor is not a verdict, and a verdict from an earlier revision is not a statement about this one. An independent
+ * review round measured that an earlier version of this paragraph drew a contrast the code does not draw — it claimed the
+ * seal could seal without a readable declaration, while an unreadable declaration is itself a blocker here (`unreadable`
+ * below, refused by name at the call site). The check reads the declaration, and a declaration that cannot be read is a
+ * problem of its own rather than "nothing to check".
  */
 export async function declaredAnchorProblems(
     root: string,
@@ -108,8 +112,16 @@ export async function declaredAnchorProblems(
     const problems: AnchorProblem[] = [];
     for (const item of items) {
         const record = item as { id?: unknown; type?: unknown; mutation?: { file?: unknown; find?: unknown } };
-        if (record?.type !== 'executable_falsifier' || record.mutation === undefined) continue;
+        if (record?.type !== 'executable_falsifier') continue;
+        // **A declared falsifier with no mutation is a problem, not a skip.** The ledger's own reader refuses such a
+        // document (`schemas/review-evidence.schema.json` requires `mutation`), so skipping it here made the seal report
+        // "nothing to check" for a document its own ledger calls unreadable — the corrupt-reads-as-absent shape, measured
+        // by an independent review round. Only records that are not falsifiers are skipped.
         const evidenceId = typeof record.id === 'string' ? record.id : '(unnamed falsifier)';
+        if (record.mutation === undefined || record.mutation === null) {
+            problems.push({ evidenceId, file: '(no file)', message: 'this falsifier declares no mutation at all, so it has no file and no anchor to check — and the ledger itself refuses the document, which requires one' });
+            continue;
+        }
         const file = typeof record.mutation.file === 'string' ? record.mutation.file : undefined;
         const find = typeof record.mutation.find === 'string' ? record.mutation.find : undefined;
         if (file === undefined || find === undefined) {

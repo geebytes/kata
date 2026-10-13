@@ -1369,7 +1369,7 @@ export function evidenceWriteConflict(existing: readonly Evidence[], evidence: E
     const recorded = existing.find((entry) => entry.id === evidence.id);
     if (!recorded) return null;
     if (JSON.stringify(recorded) === JSON.stringify(evidence)) return null;
-    return `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --reason <why>\` when the recorded item is wrong, so the correction carries its reason.`;
+    return `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --id ${evidence.id} --file <item.json> --reason <why>\` when the recorded item is wrong, so the correction names the one item it changes and carries its reason.`;
 }
 
 /** Refuse ambiguity before either narrow or wide replacement can choose a record silently. */

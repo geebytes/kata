@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
-import { appendEvidence, replaceOneEvidence } from '../../src/store/ledger.js';
+import { appendEvidence, evidenceWriteConflict, replaceOneEvidence } from '../../src/store/ledger.js';
+import type { Evidence } from '../../src/kernel/types.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 
 /**
@@ -117,5 +118,62 @@ describe('re-aiming one evidence item', () => {
             expect(refused.payload).toMatchObject({ ok: false, command: 'ledger evidence replace' });
             expect(JSON.stringify(refused.payload)).toMatch(/E1.*twice|twice.*E1/u);
         }
+    });
+
+    it('names a runnable road in the sibling refusals, not the form that costs evidence', async () => {
+        // **A review round measured that the class was closed for one refusal only.** `evidenceWriteConflict` and the
+        // "nothing was written for these" note both prescribed `ledger evidence replace --reason <why>`, which the CLI refuses
+        // for a missing `--file` — an operator following the printed remedy lands on another refusal. The narrow form is the
+        // one that runs, so both messages must name it. The stored item and the incoming one differ, which is what makes the
+        // conflict fire at all.
+        const root = fixture();
+        const stored: Evidence = {
+            id: 'E1', type: 'static_witness', ref: 'src/subject.ts', assertion: 'contains:subject',
+        } as Evidence;
+        const incoming = { ...stored, assertion: 'contains:something-else' } as Evidence;
+        const conflict = evidenceWriteConflict([stored], incoming);
+        expect(conflict, 'a changed item is a conflict').not.toBeNull();
+        expect(conflict, 'the backup names the item and a file to hand it in').toMatch(/--id E1/);
+        expect(conflict).toMatch(/--file/);
+        expect(conflict, 'and the reason the write is refused').toMatch(/--reason/);
+
+        // The road it prints is one the CLI accepts: the same flags, run for real, do not come back as a usage refusal.
+        await initLayout(root);
+        await mkdirSync(join(root, '.kata', 'tasks', 'held'), { recursive: true });
+        const submission = join(root, 'item.json');
+        writeFileSync(submission, JSON.stringify({ evidence: [incoming] }), 'utf8');
+        const written = await ledgerJson(root, ['evidence', 'replace', '--id', 'E1', '--file', submission, '--reason', 'the witness text changed']);
+        // `E1` is not held yet, so what matters here is only that the flags parsed: a usage refusal names `--file` or `--id`
+        // as missing, and this one does not.
+        expect(String(written.payload.error ?? '')).not.toMatch(/--file <set\.json>|--file.*is required/);
+
+        const noFile = await ledgerJson(root, ['evidence', 'replace', '--reason', 'no file']);
+        expect(String(noFile.payload.error ?? ''), 'the wide form without a file is the usage refusal the old remedy led to').toMatch(/--file/);
+    });
+
+    it('names the narrow form in the "nothing was written for these" note too', async () => {
+        // The same class as the write conflict, in the sibling message a review round measured: the note printed
+        // `ledger evidence replace --reason <why>`, which the CLI refuses for a missing `--file`. A note that names a road
+        // nobody can walk is the defect this change exists to remove, so it names the form that runs.
+        const root = fixture();
+        await initLayout(root);
+        await createTask({
+            root,
+            id: 'held',
+            title: 'the note names a runnable command',
+            acceptance: [{ id: 'AC-1', statement: 'the note names a runnable command' }],
+            ownedPaths: ['src/subject.ts'],
+            workflowProfile: { version: 1, isolationMode: 'current_worktree', developmentMode: 'tdd', reviewMode: 'std', comet: { projectInit: 'not_requested', openStatus: 'acknowledged' } },
+        } as never);
+        const item = { id: 'E1', type: 'static_witness', ref: 'src/subject.ts', assertion: 'contains:subject' };
+        const submission = join(root, 'item.json');
+        writeFileSync(submission, JSON.stringify({ claims: [], evidence: [item] }), 'utf8');
+        const first = await ledgerJson(root, ['evidence', 'add', '--file', submission, '--reason', 'declare the witness']);
+        expect(first.exitCode, JSON.stringify(first.payload).slice(0, 200)).toBe(0);
+        const second = await ledgerJson(root, ['evidence', 'add', '--file', submission, '--reason', 'declare the witness again']);
+        const note = String(second.payload.unchangedNote ?? '');
+        expect(note, 'the note is produced at all').not.toBe('');
+        expect(note).toMatch(/--id/);
+        expect(note).toMatch(/--file/);
     });
 });

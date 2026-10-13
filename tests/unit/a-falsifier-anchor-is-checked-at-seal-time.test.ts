@@ -134,6 +134,26 @@ describe('a falsifier anchor is checked at seal time', () => {
         expect(sealed.success, JSON.stringify(sealed).slice(0, 400)).toBe(true);
     });
 
+    it('refuses a declared falsifier that carries no mutation, rather than reporting nothing to check', async () => {
+        // **A review round measured this shape: a declaration the check could not use read as "nothing to check".** The
+        // ledger's own reader refuses the same document (`schemas/review-evidence.schema.json` requires `mutation`), so the
+        // seal reporting no problem for it made a corrupt declaration indistinguishable from an absent one. Only records that
+        // are not falsifiers are skipped now.
+        const taskId = 'anchor-no-mutation';
+        const root = await fixture(taskId);
+        const path = join(root, '.kata', 'tasks', taskId, 'review', 'evidence.json');
+        await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
+        await writeFile(path, `${JSON.stringify({ evidence: [
+            { id: 'E1', type: 'executable_falsifier', command: 'npx vitest run tests/unit/example.test.ts' },
+            { id: 'W1', type: 'static_witness', ref: 'src/thing.ts', assertion: 'contains:thing' },
+        ] }, null, 2)}\n`, 'utf8');
+
+        const sealed = await seal(root, taskId);
+        expect(sealed.success).toBe(false);
+        expect(String(sealed.error), 'the mutation-less falsifier is named, and the witness is not').toMatch(/E1/);
+        expect(String(sealed.error)).not.toMatch(/W1/);
+    });
+
     it('refuses by name when the declarations cannot be read, rather than reporting nothing to check', async () => {
         const taskId = 'anchor-unreadable';
         const root = await fixture(taskId);
