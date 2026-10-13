@@ -2,7 +2,23 @@
 
 **日期**：2026-10-10
 **来源**：本队列 **I-10**（`docs/engineering/2026-10-10-unified-kata-defect-queue.md`），证据来自 `the-review-loop-carries-its-defect-classes` 的第 3、4、5 轮独立审查。
-**状态**：设计（待实现）。前置：`the-review-loop-carries-its-defect-classes` 收口。
+**状态**：设计（2026-10-13 按实测收窄）。**两条 AC 已落地**，本 change 只做剩下的三条。
+
+> **2026-10-13 实测（先测量再实现）**：本文的 **AC-1 与 AC-2 已经实现**，随合并 change
+> `the-workflow-layer-checks-what-it-claims` 的 AC-4 一起提交（commit `aa39e8c`）：
+> - `src/quality/falsifier-anchors.ts` —— `locateAnchor` 三态（`unique | absent | ambiguous`）与 `anchorRefusal`（分别写出"匹配 0 次"与"匹配 N 次"，并带上锚点原文）；
+> - `src/workflow/seal-preflight.ts:327-336` —— blocker `falsifierAnchorUnusable`，封存按名拒绝且**不写 revision**；上游 321 行还有 `falsifierAnchorsUnreadable`（账本读不出时拒绝，而不是跳过检查）；
+> - 选择器 `tests/unit/a-falsifier-anchor-is-checked-at-seal-time.test.ts`（**13 条用例**）与 `a-stale-anchor-is-not-a-supported-falsifier.test.ts`（4 条）；
+> - **只读性质**在代码里写明并成立：`seal-preflight.ts:314-317` —— "a string match, no test run, no verdict"。
+>
+> **我自己在本会话被它拒过两次**（"E2 matches 2 times…"、"E10/E11 anchor matches 0 times…"），所以这不是纸面结论。
+> 因此本 change **不重复实现** AC-1/AC-2，只做实测缺失的三条（下表 AC-1/AC-2/AC-3 = 原 AC-3 与两处新增），
+> 并把"已落地"作为 R-1 的 `outOfScopeReason` 写进 `upstreamCoverage`。
+
+**新增的实测依据（本会话，2026-10-13）**：
+1. **修复挪行 ⇒ 锚点漂移**：手工重瞄锚点 **≥20 次**（一次修复通常移动 2–4 条），每次都是"inconclusive ⇒ 重瞄 ⇒ 重冻 ⇒ 重验"；
+2. **同一规则两处实现会互相遮蔽仪器**：`the-gates-can-be-repaired` 的 `ledger evidence verify` 同时报 **E10 与 E20 `refuted`**——形状检查写在读取器与 reset 两处，去掉任一处都不改变读数；收成一处后 19/21 supported；
+3. **封存印出的补救会丢证据**：`seal-preflight.ts:331-336` 让操作者用 `ledger evidence replace --file <整集>` 重瞄**一条**，而 `src/cli/ledger.ts:784-787` 要求 `--file`（整集替换）⇒ **拒绝印出的路会丢掉其余证据**（本会话两次因此差点丢证据，靠手工提交全集救回）。这正是本仓最贵的缺陷类，且它就在封存自己的拒绝文案里。
 
 ---
 
@@ -47,10 +63,16 @@
 
 | AC | 属性 | 选择器 | falsifier |
 |---|---|---|---|
-| **AC-1** | 声明的证据中，锚点在当前文件里匹配 **≠1** 次时，**封存按名拒绝**，点名 evidence id、文件、实际匹配次数与可执行的重瞄命令；拒绝时**不写出任何 revision** | `tests/unit/a-moved-anchor-refuses-the-seal.test.ts` | 关掉该检查 ⇒ 用例红；保留检查但把"≠1"放宽成"<1" ⇒ 另一条用例红（多匹配同样不可用） |
-| **AC-2** | 检查**只读**：拒绝路径不修改任何被声明的文件，也不写 `.kata` 之外的任何东西（工作树前后逐字节一致） | 同上（同一条用例内的第二组断言） | 让检查在拒绝前写一个临时文件 ⇒ 用例红 |
-| **AC-3** | 重瞄一条证据是**一条命令**（按 id 更新，不要求提交完整集合），且更新后旧绑定不被静默保留 | `tests/unit/re-aiming-one-evidence-item.test.ts` | 命令退化为全量替换 ⇒ 用例红 |
-| **AC-4** | 该检查**不能**替代 `evidence verify`：一条锚点仍唯一、但变异不生效的证据在封存时**不被拒绝**，而 `evidence verify` 仍报 `refuted` | `tests/unit/an-anchor-that-still-matches-is-not-a-verdict.test.ts` | 让封存顺带断言 verdict ⇒ 用例红（它会把充分条件混进必要条件） |
+| 原 AC | 现状 |
+|---|---|
+| 原 AC-1（封存拒绝 ≠1 锚点） | ✅ **已落地**（`aa39e8c`，见上）；本 change 只把**它的补救文案**改成可执行（下表 AC-2） |
+| 原 AC-2（检查只读） | ✅ **已落地**（`seal-preflight.ts:314-317`）；R-1 的 `outOfScopeReason` 记录此事 |
+
+| 本 change 的 AC | 属性 | 选择器 | falsifier |
+|---|---|---|---|
+| **AC-1** | **重瞄一条证据是一条命令**：`ledger evidence replace --change <id> --id <evidence-id> --reason <why>` 只更新那一条的锚点，其余证据的绑定（id / file / find / replace / claim 引用）**逐字不变**——所以重瞄**不可能**静默丢掉其余证据 | `tests/unit/re-aiming-one-evidence-item.test.ts` | 让 `--id` 退化成整集替换（用提交里的集合覆盖）⇒ 用例红 |
+| **AC-2** | 封存的锚点拒绝**印出那条可执行的命令**（点名 `--id`），而不是要求提交整集 | `tests/unit/a-moved-anchor-refuses-the-seal.test.ts` | 把文案改回 `--file <整集>` ⇒ 用例红（断言的是"命令里含 `--id` 且不含 `--file`"这一**性质**，不是字符串） |
+| **AC-3** | **分工被断言而非写在注释里**：锚点仍唯一匹配、但变异不再生效的证据，**封存不拒**；而 `ledger evidence verify` 仍报 `refuted` | `tests/unit/an-anchor-that-still-matches-is-not-a-verdict.test.ts` | 让封存顺带断言 verdict ⇒ 用例红（把充分条件混进必要条件） |
 
 四个 AC 各自独立选择器文件（共用文件会被 `dedupeChecks` 折叠，本仓已因此三次留下没有证据的验收项）。
 
@@ -68,7 +90,7 @@
 
 | 项 | 估计 |
 |---|---|
-| 实现（4 AC，TDD） | 3–5 h（含封存前检查的接入点定位与两个选择器夹具） |
+| 实现（3 AC，TDD；原 AC-1/AC-2 已落地不重复做） | 1.5–2 h |
 | 每次封存的额外耗时 | 毫秒级（只读文件与计数），实测：一次 `String.split(find).length - 1` 级操作 |
 | 一次封存 + Verify + 账本 | ~10 min（既有流程，未增加重跑） |
 | 独立审查轮 | 一次（17–40 min） |
