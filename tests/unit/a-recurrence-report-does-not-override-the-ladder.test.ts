@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { initLayout, reviewPath } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { writeCurrentState, type Phase } from '../../src/core/state.js';
@@ -36,6 +37,54 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+/**
+ * A history that has stopped making progress **on the current revision**, which is what the loop's own switch reads.
+ *
+ * `roundBoundTo` requires both the revision id and the manifest hash, so a round that names the revision without its hash is
+ * history about something else and the switch never sees it — the first version of this fixture wrote `rev-a`/`rev-b` and
+ * measured `no_current_rounds`. Three rounds with one unchanged blocking count is the escalation threshold.
+ */
+function stalledOnCurrentRevision(revisionId: string, manifestHash: string): ReviewRound[] {
+    return [1, 2, 3, 4].map((index) => ({
+        at: String(index),
+        revisionId,
+        manifestHash,
+        blockingIds: ['A-1'],
+        blockingCount: 1,
+        findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: index === 1 ? 'original' : 'repair' }],
+    }));
+}
+
+/**
+ * A ledger that has decided something other than `pass`, seeded through the real CLI in the fixture's own root.
+ *
+ * **The router's precedence is part of what the claims say, so it is asserted rather than described.** The ledger branch sits
+ * below the recurrence branches, so a decided-but-failing ledger answers `satisfy_ledger_deficits` even while a stop-line class
+ * recurrence is live — an independent review round measured that C2's first clause was false in exactly that state. Seeded with
+ * one claim, one witness and no challenge, so `decide` reports `insufficient` for a reason the ledger itself names.
+ */
+async function seedFailingLedger(root: string): Promise<void> {
+    const quiet = async (argv: string[]): Promise<void> => {
+        const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+        try {
+            await runLedgerCommand(argv, { root, changeId: taskId });
+        } finally {
+            spy.mockRestore();
+        }
+    };
+    await quiet(['policy', '--init']);
+    await quiet(['freeze']);
+    await quiet(['claim', 'add', '--statement', 'the subject holds', '--risk-class', 'consistency', '--severity', 'major',
+        '--evidence', 'E1', '--depends-on', 'path:subject.ts', '--id', 'C1']);
+    const submission = join(root, 'E1.json');
+    await writeFile(submission, JSON.stringify({
+        claims: [],
+        evidence: [{ id: 'E1', type: 'static_witness', ref: 'subject.ts', assertion: 'contains:subject' }],
+    }));
+    await quiet(['evidence', 'add', '--file', submission]);
+    await quiet(['evidence', 'verify']);
+}
+
 interface Fixture {
     root: string;
     summary: Awaited<ReturnType<typeof readUpstreamSummary>>;
@@ -44,7 +93,7 @@ interface Fixture {
 }
 
 async function fixtureWith(
-    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding' | 'major-finding'; rounds?: ReviewRound[]; phase?: Phase; reviewMode?: 'std' | 'strict' } = {},
+    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding' | 'major-finding'; rounds?: ReviewRound[]; phase?: Phase; reviewMode?: 'std' | 'strict'; stalledRounds?: boolean } = {},
 ): Promise<Fixture> {
     const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
     roots.push(root);
@@ -63,7 +112,7 @@ async function fixtureWith(
         join(root, '.kata', 'evidence', `${taskId}-current.json`),
         `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: sealed.revision.id })}\n`,
     );
-    await writeFile(reviewRoundsPath(root, taskId), `${(options.rounds ?? recyclingRounds).map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    await writeFile(reviewRoundsPath(root, taskId), `${(options.stalledRounds ? stalledOnCurrentRevision(sealed.revision.id, sealed.revision.manifestHash) : (options.rounds ?? recyclingRounds)).map((entry) => JSON.stringify(entry)).join('\n')}\n`);
 
     const binding = { revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash };
     if ((options.reviewRecord ?? 'pending-clean') === 'pending-clean') {
@@ -360,5 +409,42 @@ describe('a recurrence report does not override the ladder', () => {
             expect(action.reason, `${phase}: ${JSON.stringify(action)}`).not.toBe('review_class_recurring');
             expect(action.nextSkill, phase).not.toBe('/kata-build');
         }
+    });
+
+    it('AC-4: the precedence the claims name is asserted, not described', async () => {
+        // **An independent review round's finding, three times over, and the class-level remedy.** Rounds 2 and 3 each found a
+        // claim that stated a route without the precedence the router actually applies — the recurrence branches sit *below* the
+        // review loop's own switch and the ledger branch, and above nothing that outranks them. The clauses were true only in
+        // the state that also admitted a repair. So the three exception states are asserted here rather than listed in prose:
+        // a clause that names a precedence is worth exactly what the state asserting it is worth.
+        //
+        // (1) Both readings live and nothing at the bar — AC-1's own state, where the routes are silent and the fresh review
+        //     answers. This is the state in which the claim's first clause used to be false.
+        const bothReadings = [
+            { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            { at: '2', revisionId: 'rev-b', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
+        ];
+        const silent = await fixtureWith({ rounds: bothReadings });
+        expect(silent.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'the class reading must be live').toBe(true);
+        expect(silent.summary.reviewLoopRecurrence?.length, 'and the id reading too').toBeGreaterThan(0);
+        expect(silent.summary.blockingFindings, 'and the ladder must admit nothing').toBe(0);
+        expect(suggestCandidateAction('review', silent.summary)).toMatchObject({ nextSkill: '/kata-review', reason: 'complete_review_conclusion' });
+
+        // (2) A loop that has stopped making progress: the switch answers first, and it is a human decision rather than a repair.
+        const stalled = await fixtureWith({ reviewRecord: 'blocking-finding', stalledRounds: true });
+        expect(stalled.summary.reviewLoop?.kind, 'the switch must own this state').toBe('stalled_current_rounds');
+        expect(stalled.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
+        expect(suggestCandidateAction('review', stalled.summary)).toMatchObject({ nextSkill: '/kata-review', reason: 'escalate_review_without_progress' });
+
+        // (3) A ledger that decided anything but `pass`: the ledger branch answers, and its destination does open.
+        const failing = await fixtureWith();
+        await seedFailingLedger(failing.root);
+        const withLedger = await readUpstreamSummary(failing.root, taskId);
+        expect(withLedger.ledger?.state, 'the ledger must have decided').toBe('decided');
+        expect(withLedger.ledger?.verdict, 'and not have passed').not.toBe('pass');
+        expect(withLedger.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
+        const ledgerAction = suggestCandidateAction('review', withLedger);
+        expect(ledgerAction.reason, JSON.stringify(ledgerAction)).toBe('satisfy_ledger_deficits');
+        expect(ledgerAction.nextSkill).toBe('/kata-build');
     });
 });
