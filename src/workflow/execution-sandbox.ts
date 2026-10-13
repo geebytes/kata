@@ -181,17 +181,30 @@ function mapRepositoryPath(path: string, authorRoot: string, sandboxRoot: string
  * second is the defect the report measured.
  */
 function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: string): string {
-  if (!value.includes(authorRoot)) return value;
-  let result = '';
-  let scanFrom = 0;
-  while (scanFrom < value.length) {
-    const at = value.indexOf(authorRoot, scanFrom);
-    if (at === -1) { result += value.slice(scanFrom); break; }
+  const occurrences: number[] = [];
+  for (let at = value.indexOf(authorRoot); at !== -1; at = value.indexOf(authorRoot, at + 1)) occurrences.push(at);
+  if (occurrences.length === 0) return value;
+  // **Both boundaries, and all-or-nothing.** A root occurrence is a reference only when it is a whole path segment: the
+  // character before it is not part of a path segment (so `snapshot/app/x` is not a reference to `/app`), and the character
+  // after it is a separator or the end of the value (so `tests/application` is not either). An independent review round
+  // measured the one-sided rule rewriting the tail of values that are not repository references at all
+  // (`/tmp/snapshot/app/x` became `/tmp/snapshot<sandbox>/x`), so the whole value is left exactly as written when any of its
+  // occurrences fails either boundary: a string that only partly looks like a repository path is not one, and rewriting the
+  // part that looks right corrupts the rest.
+  const isSegment = (at: number): boolean => {
+    const before = at === 0 ? '/' : value[at - 1];
     const after = at + authorRoot.length;
-    const isSegment = after === value.length || value[after] === '/';
-    result += value.slice(scanFrom, at) + (isSegment ? sandboxRoot : authorRoot);
-    scanFrom = after;
+    const endsSegment = after === value.length || value[after] === '/';
+    const startsSegment = !/[A-Za-z0-9._-]/u.test(before);
+    return startsSegment && endsSegment;
+  };
+  if (!occurrences.every(isSegment)) return value;
+  let result = '';
+  let written = 0;
+  for (const at of occurrences) {
+    result += value.slice(written, at) + sandboxRoot;
+    written = at + authorRoot.length;
   }
-  return result;
+  return result + value.slice(written);
 }
 

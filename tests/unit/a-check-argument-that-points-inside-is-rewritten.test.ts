@@ -43,6 +43,27 @@ describe('an argument that references the repository is rewritten', () => {
         expect(execution?.cwd).toBe(`${sandboxRoot}/packages/x`);
     });
 
+    it('leaves the whole value alone when any occurrence is not a path segment', () => {
+        // **The one-sided rule corrupted values that are not repository references.** A review round measured that requiring
+        // only the right boundary rewrote the tail of `/tmp/snapshot/app/x` — an absolute path outside the repository — into
+        // `/tmp/snapshot<sandbox>/x`, and the same in `appbackup/app/x`. When any occurrence fails either boundary, the value
+        // is not a repository path and is passed through exactly as written.
+        const execution = checksForExecutionSandbox([
+            {
+                kind: 'test',
+                command: 'node',
+                args: [`/tmp/snapshot${authorRoot}/x`, `${authorRoot}backup/${authorRoot}/x`, `A=/tmp/snapshot${authorRoot}/x`],
+                cwd: authorRoot,
+            },
+        ], authorRoot, sandboxRoot)[0].execution;
+
+        expect(execution?.args).toEqual([
+            `/tmp/snapshot${authorRoot}/x`,
+            `${authorRoot}backup/${authorRoot}/x`,
+            `A=/tmp/snapshot${authorRoot}/x`,
+        ]);
+    });
+
     it('leaves a relative value alone, because a relative value is not a repository reference', () => {
         const execution = checksForExecutionSandbox([
             { kind: 'test', command: 'node', args: ['src:application'], cwd: authorRoot },

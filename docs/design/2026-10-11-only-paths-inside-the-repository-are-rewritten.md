@@ -34,7 +34,7 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 
 ## 2. 修法（取报告的 A，并写成"一处判定"）
 
-`rewriteAuthorReference` 改为：**只有当作者根的出现位置以 `/` 或值尾结束时**才替换那一次出现；其余出现原样通过。
+`rewriteAuthorReference` 改为：**只有当作者根的每一次出现都成段（左边界不是路径段字符、右边界是 `/` 或值尾）时才替换**；任何一次出现不成段 ⇒ **整个值原样通过**。
 
 ```
 '/app'              → sandboxRoot
@@ -54,7 +54,8 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 实现要点（防止"改完又长出一套新规则"）：
 - 与 `mapRepositoryPath` 的判定**同源**：同一个「值是否就在仓库内」的谓词，路径版与字符串版各用一次；
 - 处理尾斜杠（`/app/` 与值以 `/` 结尾）不产生 `//`；
-- 只改这一个函数，`checksForExecutionSandbox` 的四个调用点（command / args / env / cwd）都经它。**实测更正**：该函数只有**一个**调用者（`src/workflow/orchestrator.ts` 的封存路径），所以本节早先写的「`build --seal` 与 `verify` 共用这条解析」不成立 —— `verify` 读的是既有证据，不执行新的沙箱命令。
+- **两个谓词，各管各的形态**（复核第 3 轮实测更正）：`command` / `args` / `env` 是**字符串**，走 `rewriteAuthorReference`（可内嵌、按段判定、全有或全无）；`cwd` 是**一个路径**，走 `mapRepositoryPath`（整值判定，并把相对值按作者根解析）。两者在一个值上可以有不同答案（`tests/application` 作为 cwd 会被解析进快照，作为参数则原样），这是刻意的：cwd 必须是快照内一个真实目录，而参数里的长名不是仓库引用。
+- 该解析只有**一个**调用者（`src/workflow/orchestrator.ts` 的封存路径），所以本节早先写的「`build --seal` 与 `verify` 共用这条解析」不成立 —— `verify` 读的是既有证据，不执行新的沙箱命令。
 
 ## 3. 验收项（各配独立选择器文件）
 
