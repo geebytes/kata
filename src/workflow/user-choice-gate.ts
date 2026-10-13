@@ -234,11 +234,11 @@ function recordShape(path: string): GateState | undefined {
     stat = lstatSync(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    return { kind: 'damaged', why: `the record at ${path} cannot be examined (${(error as Error).message})` };
+    return { kind: 'damaged', why: `the record at ${path} cannot be examined (${(error as Error).message})`, regular: false };
   }
   if (stat.isFile()) return undefined;
   const shape = stat.isSymbolicLink() ? 'a symbolic link' : stat.isDirectory() ? 'a directory' : 'not a regular file';
-  return { kind: 'damaged', why: `the record at ${path} is ${shape}, not a regular file, so it cannot be read as a record` };
+  return { kind: 'damaged', why: `the record at ${path} is ${shape}, not a regular file, so it cannot be read as a record`, regular: false };
 }
 
 /** A boundary the caller must supply, refused by name when it is missing. */
@@ -253,35 +253,10 @@ async function readTaskChoiceStateForReset(root: string, taskId: string): Promis
   return readTaskChoice(root, taskId);
 }
 
-/**
- * A record that may be removed is a **regular file**: anything else is refused by name, before it is read.
- *
- * Measured by the second round, one errno apart each time: a directory threw a raw EISDIR; a symlink made the audit's digest
- * describe the *target* while the removal took the link (so the audit and the tree disagreed about what was removed); a FIFO
- * made the reader block forever; and a mode-000 file threw a raw EACCES. The check happens before the read, so no shape can
- * hang or throw out of the command.
- */
-function assertResettableRecord(path: string, what: string): void {
-  // **`lstat`, not `stat`.** `stat` follows a link, so a symlink to a file answered `isFile()` and the removal took the link
-  // while the audit described the target — measured, and the same distinction an earlier change in this repository paid for.
-  let stat: ReturnType<typeof lstatSync>;
-  try {
-    stat = lstatSync(path);
-  } catch (error) {
-    throw new Error(`The ${what} record cannot be examined at ${path} (${(error as Error).message}), so nothing was removed.`);
-  }
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    const shape = stat.isSymbolicLink() ? 'a symbolic link' : stat.isDirectory() ? 'a directory' : 'not a regular file';
-    throw new Error(
-      `The ${what} path is ${shape}, not a record: ${path}. This command removes records only, so nothing was removed.`,
-    );
-  }
-}
-
 /** The task-level choice in three states, the shape `GateState` has for a boundary's record. */
 type TaskChoiceState =
   | { kind: 'absent' }
-  | { kind: 'damaged'; why: string }
+  | { kind: 'damaged'; why: string; regular: boolean }
   | { kind: 'usable'; choice: TaskChoice };
 
 async function readTaskChoice(root: string, taskId: string): Promise<TaskChoiceState> {
@@ -292,7 +267,7 @@ async function readTaskChoice(root: string, taskId: string): Promise<TaskChoiceS
     const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
       || (typeof cause === 'object' && cause !== null && (cause as NodeJS.ErrnoException).code === 'ENOENT');
     if (missing) return { kind: 'absent' };
-    return { kind: 'damaged', why: (error as Error).message };
+    return { kind: 'damaged', why: (error as Error).message, regular: true };
   }
 }
 
@@ -453,7 +428,13 @@ export async function consumeUserChoiceGate(input: { root: string; taskId: strin
  */
 export type GateState =
   | { kind: 'absent' }
-  | { kind: 'damaged'; why: string }
+  /**
+   * `regular` is the fact the **removal** needs and the read cannot supply: a damaged record that is a regular file may be
+   * removed (that is the road out of the deadlock this change exists for), while a record that is a symlink, a directory or
+   * a FIFO is not a record at all and removing it would take something else (measured: the reader refuses all of them, and
+   * without this distinction the reset removed a symlink while the audit described its target).
+   */
+  | { kind: 'damaged'; why: string; regular: boolean }
   | { kind: 'usable'; gate: UserChoiceGate };
 
 export async function readGateState(root: string, taskId: string, boundary: UserChoiceBoundary): Promise<GateState> {
@@ -478,7 +459,7 @@ export async function readGateState(root: string, taskId: string, boundary: User
     const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
       || (typeof cause === 'object' && cause !== null && (cause as NodeJS.ErrnoException).code === 'ENOENT');
     if (missing) return { kind: 'absent' };
-    return { kind: 'damaged', why: (error as Error).message };
+    return { kind: 'damaged', why: (error as Error).message, regular: true };
   }
 }
 
@@ -524,11 +505,12 @@ export async function resetUserChoiceGate(input: {
       + `If it no longer speaks for the content, the road is to recreate it${input.boundary ? ` (${gateRebuildInstruction(input.boundary)})` : ''}.`,
     );
   }
-  // **Only a regular file is a record, and the shape is asked before anything is read.** A symlink made the audit's digest
-  // describe the target while the removal took the link, a FIFO made the reader block, an unreadable file threw a raw EACCES
-  // (rounds 2 and 3). `assertResettableRecord` is the same question `recordShape` answers, asked here so the removal cannot
-  // proceed on a shape the reader would have refused.
-  assertResettableRecord(path, what);
+  // **The shape is a fact the reader supplies, not a second check.** It refuses a non-regular file before reading, and the
+  // state carries that decision, so this function asks it rather than re-deriving it — the two copies that existed before
+  // each masked the other's falsifier (the harness reported both as `refuted`).
+  if (!state.regular) {
+    throw new Error(`The ${what} path is not a regular file, so it is not a record and nothing was removed: ${path}. ${state.why}`);
+  }
   const removedSha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
   // **A previous removal's audit must not block this one.** `{ flag: 'wx' }` refuses to overwrite, so a record reset twice
   // left the second reset permanently refused — a new deadlock created by the repair (measured by round 3). The audit is

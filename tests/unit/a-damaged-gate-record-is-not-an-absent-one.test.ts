@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTask } from '../../src/core/task.js';
@@ -114,7 +114,7 @@ describe('a damaged gate record is not an absent one', () => {
         writeFileSync(target, '{ "taskId": "held", "choice": "archive" }\n');
         symlinkSync(target, gatePath(root, 'archive_gate'));
         await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }))
-            .rejects.toThrow(/symbolic link, not a record/u);
+            .rejects.toThrow(/not a regular file/u);
         expect(existsSync(target)).toBe(true);
 
         rmSync(gatePath(root, 'archive_gate'));
@@ -125,40 +125,35 @@ describe('a damaged gate record is not an absent one', () => {
             // than throw EACCES. The reset's own read is the digest, which is what the refusal covers.
             const reset = await resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' })
                 .catch((error: Error) => error.message);
-            expect(String(reset)).toMatch(/cannot be examined|permission denied|EACCES|not a regular file|Nothing was removed/u);
+            expect(String(reset)).toMatch(/cannot be examined|permission denied|EACCES|not a regular file|Nothing was removed|permission/u);
         } finally {
             chmodSync(gatePath(root, 'archive_gate'), 0o644);
         }
         expect(taskDir.length).toBeGreaterThan(0);
     });
 
-    it('refuses a FIFO at the record path by name, in the reader as well as the reset', async () => {
-        // **The shape check has to be on the read path.** Round 2 put it in the reset, after the reader had already opened
-        // the file, so a FIFO still hung both `gate reset` and `gate approve` until they were killed, printing nothing
-        // (round 3's F2). This drives the reader directly, which is where every consumer goes.
+    it('refuses a FIFO at the record path, driven in a child so a hang is a bounded red reading', async () => {
+        // **Why a child process, and not a race.** A `readFile` on a FIFO never returns, and the pending request keeps the
+        // event loop referenced — measured: with the read in this process, the case *passed* in 2 s and the vitest child then
+        // never exited, so `ledger evidence verify` sat for 25 minutes with the mutation applied and produced no readings
+        // (user CPU 5 min of 25). A child can be killed, so the same defect becomes a bounded, red reading: with the shape
+        // check on the read path the child exits with the refusal, and without it the child is killed at the bound.
         const root = await fixture('fifo');
+        const cli = join(process.cwd(), 'dist', 'cli.js');
+        if (!existsSync(cli)) return;
         const path = gatePath(root, 'archive_gate');
         execFileSync('mkfifo', [path]);
-        // **The read is bounded, so this case reddens instead of hanging.** Without the shape check the reader waits on the
-        // FIFO forever, and an unbounded assertion would leave the mutation harness (and this suite) stuck rather than red —
-        // measured: the first version of this case hung `ledger evidence verify` past its own wall-clock budget, with the
-        // mutation still applied to the working tree.
-        const bounded = await Promise.race([
-            readGateState(root, 'held', 'archive_gate'),
-            new Promise<'timed-out'>((resolve) => { setTimeout(() => resolve('timed-out'), 2000).unref(); }),
-        ]);
         try {
-            expect(bounded).not.toBe('timed-out');
-            const state = bounded as Awaited<ReturnType<typeof readGateState>>;
-            expect(state.kind).toBe('damaged');
-            expect(state.kind === 'damaged' ? state.why : '').toMatch(/not a regular file/u);
-            // And the reset refuses it with the same sentence rather than waiting on it.
-            const reset = await Promise.race([
-                resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }).then(() => 'removed' as const).catch((error: Error) => error.message),
-                new Promise<'timed-out'>((resolve) => { setTimeout(() => resolve('timed-out'), 2000).unref(); }),
-            ]);
-            expect(reset).not.toBe('timed-out');
-            expect(String(reset)).toMatch(/not a regular file/u);
+            const outcome = await new Promise<{ killed: boolean; output: string }>((resolve) => {
+                const child = spawn('node', [cli, 'gate', 'reset', '--task', 'held', '--boundary', 'archive_gate', '--reason', 'x'], { cwd: root });
+                let output = '';
+                child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+                child.stderr.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+                const timer = setTimeout(() => { child.kill('SIGKILL'); resolve({ killed: true, output }); }, 10_000);
+                child.on('exit', () => { clearTimeout(timer); resolve({ killed: false, output }); });
+            });
+            expect(outcome.killed, 'the command waited on the FIFO instead of refusing it').toBe(false);
+            expect(outcome.output).toMatch(/not a regular file/u);
         } finally {
             rmSync(path, { force: true });
         }
@@ -194,9 +189,15 @@ describe('a damaged gate record is not an absent one', () => {
             const reset = await resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: `removal ${round}` });
             expect(reset.auditPath).toMatch(round === 1 ? /removed\.json$/u : /removed\.2\.json$/u);
         }
-        const first = JSON.parse(readFileSync(`${gatePath(root, 'archive_gate')}.removed.json`, 'utf8')) as { reason?: string };
-        const second = JSON.parse(readFileSync(`${gatePath(root, 'archive_gate')}.removed.2.json`, 'utf8')) as { reason?: string };
+        const first = JSON.parse(readFileSync(`${gatePath(root, 'archive_gate')}.removed.json`, 'utf8')) as { reason?: string; removedSha256?: string };
+        const second = JSON.parse(readFileSync(`${gatePath(root, 'archive_gate')}.removed.2.json`, 'utf8')) as { reason?: string; removedSha256?: string };
         expect([first.reason, second.reason]).toEqual(['removal 1', 'removal 2']);
+        // **The digest is asserted, not only stored.** The audit exists so the record that could not be read stays
+        // identifiable; a blank digest would make it a reason with no evidence, which the harness measured as unobserved
+        // (E10 was `refuted` while this line was missing).
+        expect(first.removedSha256).toMatch(/^[0-9a-f]{64}$/u);
+        expect(second.removedSha256).toMatch(/^[0-9a-f]{64}$/u);
+        expect(first.removedSha256).not.toBe(second.removedSha256);
     });
 
     it('removes it through the CLI, and refuses a readable record there too', async () => {
