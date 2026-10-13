@@ -712,12 +712,23 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: invalidating.priorityFor?.(upstream) ?? invalidating.priority,
     };
   }
-  // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
-  // class view on the upstream summary and acted on nothing — the "computed, nobody reads it" shape this whole change exists
-  // to close, measured by an independent round. It sits above the id-based route because a class recurring inside a repair
-  // says more than one id repeating: the id view cannot see it at all (no id repeated across the seven rounds that produced
-  // ten findings, seven of them in the previous round's repair).
-  if (phase === 'review' && (upstream.reviewLoopClassRecurrence ?? []).some((entry) => entry.stopLineCandidate)) {
+  // **A recurrence is a report about history, and it may only route a repair the current ladder admits.** Measured on
+  // `a-repair-revalidates-the-evidence-it-moved`: a current revision, a passing ledger, no blocking and no major finding —
+  // and a historical class recurrence. This branch answered `/kata-build` and `kata-cli build` then refused ("Build cannot
+  // run from review without a problem the strict ladder blocks on … and none has been disposed of"), so the task could
+  // neither reach the review that would decide whether the recurrence was resolved nor enter the repair it was sent to.
+  // The branch only ever changed the outcome in exactly that state: where the ladder *does* block, the blocking and major
+  // branches below already route to the same place. The reading stays published on the summary; the route follows the
+  // ladder, and `repair-entry` — which is what actually decides whether Build runs — is the same rule read once more.
+  const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
+  const ladderAdmitsRepair = upstream.blockingFindings > 0
+    || (blockingSeverities.length > 1 && upstream.majorFindings > 0);
+  // **A class that came back inside a repair is reported, not merely published, where the ladder admits the repair.** The
+  // first version of this published the class view on the upstream summary and acted on nothing — the "computed, nobody
+  // reads it" shape this whole change exists to close, measured by an independent round. It sits above the id-based route
+  // because a class recurring inside a repair says more than one id repeating: the id view cannot see it at all (no id
+  // repeated across the seven rounds that produced ten findings, seven of them in the previous round's repair).
+  if (ladderAdmitsRepair && (upstream.reviewLoopClassRecurrence ?? []).some((entry) => entry.stopLineCandidate)) {
     const candidates = (upstream.reviewLoopClassRecurrence as ClassRecurrence[]).filter((entry) => entry.stopLineCandidate);
     return {
       nextSkill: '/kata-build',
@@ -729,8 +740,9 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // **A problem that survived a repair is worth another implementation pass, and it is a route rather than a gate change.**
   // It sits below the escalation above, so it can only speak where that produced nothing: the operator is told the same
   // finding keeps coming back even while each round's own count looks like steady progress. Nothing about what the gates
-  // demand moved — a change that only recurs is still routed the way a change with a blocking finding always was.
-  if (phase === 'review' && (upstream.reviewLoopRecurrence?.length ?? 0) > 0) {
+  // demand moved — a change that only recurs is still routed the way a change with a blocking finding always was, which is
+  // why it carries the same admission as the class route above.
+  if (ladderAdmitsRepair && (upstream.reviewLoopRecurrence?.length ?? 0) > 0) {
     return {
       nextSkill: '/kata-build',
       role: 'implementer',
@@ -783,7 +795,8 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // so position 0 is the severity every mode refuses and position 1 is the one only the tiers above std do. This used
   // to be two blocks of prose plus a `=== 'strict'` literal, which is why `security` — a tier the kernel gives two
   // reviewers and always-on quorum — blocked on *less* than the tier below it.
-  const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
+  // Read above, where the recurrence routes ask it whether the ladder admits a repair at all: one derivation, asked by
+  // both, so a tier that blocks on major findings cannot mean one thing to the recurrence routes and another here.
   const hardestSeverity = blockingSeverities[0];
   // An open problem at the tier's bar is repaired, not argued with.
   if (phase === 'review' && upstream.blockingFindings > 0) {

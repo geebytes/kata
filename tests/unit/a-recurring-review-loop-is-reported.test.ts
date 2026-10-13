@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
+import { createTask } from '../../src/core/task.js';
 import { recurrenceAcrossRevisions, reviewRoundsPath, type ReviewRound } from '../../src/quality/repair.js';
 import { invalidatingStates, type UpstreamSummary } from '../../src/workflow/navigation.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
@@ -83,24 +84,39 @@ describe('a finding that recurs across revisions is reported', () => {
 describe('the recovery route for a recurring finding', () => {
     async function summaryWith(
         rounds: ReviewRound[] | ((sealed: { revisionId: string; manifestHash: string }) => ReviewRound[]),
-        options: { corruptReviewRecord?: boolean; mixedRevisionEvidence?: boolean; verifyFailed?: boolean; corruptLedger?: boolean } = {},
+        options: { corruptReviewRecord?: boolean; mixedRevisionEvidence?: boolean; verifyFailed?: boolean; corruptLedger?: boolean; blockingFinding?: boolean } = {},
     ): Promise<{ summary: Awaited<ReturnType<typeof readUpstreamSummary>>; sealedRevisionId: string; sealedManifestHash: string; root: string }> {
         const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
         roots.push(root);
         await initLayout(root);
-        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
         await writeFile(join(root, 'subject.ts'), 'export const subject = true;\n');
-        await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), `${JSON.stringify({
+        // **A record the readers can validate.** The fixture wrote `task.json` by hand and the router never opened it through
+        // the schema — until a case carried a review record, whose reader validates the task it binds to. A hand-written
+        // record that no reader accepted was a fixture that could not be reached by the production path it stood for.
+        await createTask({
+            root,
             id: taskId,
             title: 'Recurring finding',
             acceptance: [{ id: 'AC-1', statement: 'x' }],
             ownedPaths: ['subject.ts'],
-            workflowProfile: { reviewMode: 'strict' },
-        })}\n`);
+            workflowProfile: { version: 1, isolationMode: 'current_worktree', developmentMode: 'tdd', reviewMode: 'strict', comet: { projectInit: 'not_requested', openStatus: 'acknowledged' } },
+        });
         const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: ['test'] });
         await writeFile(join(root, '.kata', 'evidence', `${taskId}-current.json`), `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: sealed.revision.id })}\n`);
         const materialized = typeof rounds === 'function' ? rounds({ revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash }) : rounds;
         await writeFile(reviewRoundFile(root), materialized.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+        if (options.blockingFinding === true) {
+            // **The state the route needs, and the one this fixture used to omit.** A recurrence may only route a repair the
+            // current ladder admits: with no record at all the ladder has nothing to repair, `kata-cli build` refuses, and the
+            // route it was asserting was a route nobody could walk (measured on
+            // `a-repair-revalidates-the-evidence-it-moved`). The finding is bound to the sealed revision, so it counts.
+            await writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), `${JSON.stringify({
+                revisionId: sealed.revision.id,
+                manifestHash: sealed.revision.manifestHash,
+                status: 'pending',
+                findings: [{ id: 'R-1', taskId, severity: 'blocking', message: 'the current content is wrong', falsifies: 'the recurrence route is admissible' }],
+            })}\n`);
+        }
         if (options.mixedRevisionEvidence === true) {
             // Two evidence files bound to different revisions: judged together they prove nothing about either.
             await writeFile(join(root, '.kata', 'evidence', `${taskId}-other.json`), `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: 'revision-something-else' })}\n`);
@@ -126,7 +142,7 @@ describe('the recovery route for a recurring finding', () => {
             round('1', 'rev-a', ['F-1']),
             round('2', 'rev-b', ['F-1', 'F-2']),
             round('3', 'rev-c', ['F-1']),
-        ]);
+        ], { blockingFinding: true });
 
         // The scope of the loop assessment is the current revision, so it has nothing to judge — which is precisely the
         // state that used to be the end of the story.
@@ -145,7 +161,7 @@ describe('the recovery route for a recurring finding', () => {
         const recycling = await summaryWith([
             { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
             { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
-        ]);
+        ], { blockingFinding: true });
         expect(recycling.summary.reviewLoopRecurrence).toEqual([]);
         expect(recycling.summary.reviewLoopClassRecurrence).toEqual([
             expect.objectContaining({ class: 'instrument-unsound', oracle: 'mechanizable', repairOrigin: 1, stopLineCandidate: true }),
@@ -339,7 +355,7 @@ describe('the recovery route for a recurring finding', () => {
         expect(stalledAction.priority).toBeGreaterThan(2100);
 
         // And the recurring route is not a gateway: crossing phases stays the operator's decision at the gates it names.
-        const recurring = await summaryWith([round('1', 'rev-a', ['F-1']), round('2', 'rev-b', ['F-1'])]);
+        const recurring = await summaryWith([round('1', 'rev-a', ['F-1']), round('2', 'rev-b', ['F-1'])], { blockingFinding: true });
         const action = suggestCandidateAction('review', recurring.summary);
         expect(action.reason).toBe('review_loop_recurring');
         expect(action.nextSkill).toBe('/kata-build');
