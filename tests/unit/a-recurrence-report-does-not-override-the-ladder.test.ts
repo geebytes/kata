@@ -269,12 +269,16 @@ describe('a recurrence report does not override the ladder', () => {
         expect(classAction.priority, `${classAction.priority} vs ${idAction.priority}`).toBeGreaterThan(idAction.priority!);
     });
 
-    it('AC-4: a class recurrence the design calls normal is not escalated', async () => {
+    it('AC-4: a class recurrence the design calls normal is not routed to a repair', async () => {
         // `classRecurrence`'s own doc says the stop-line filter is deliberate in both halves: **`mechanizable` only**, because
         // "a `judgment` class recurring is normal — two independent rounds can each find a distinct intent omission, which is
         // the instrument working. Escalating on that would be a false stop." A third verifier measured that deleting that half
         // stayed green (selector and full suite) while the reason moved: an admitting ladder plus a judgment-class recurrence
         // reported `repair_blocking_review_findings` and would report `review_class_recurring` without the filter.
+        //
+        // The route is a plain repair route, not a gate: `review_class_recurring` is `null` in `trustBoundaryByReason` and
+        // needs no confirmation. `escalate_review_without_progress` is the stop-line escalation and a different branch — an
+        // independent review round corrected this case's own wording, which had called the route an escalation.
         const judgmentRounds = [
             { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'an-unrecognised-class', origin: 'original' }] },
             { at: '2', revisionId: 'rev-b', blockingIds: ['F-2'], blockingCount: 1, findings: [{ id: 'F-2', severity: 'major', class: 'an-unrecognised-class', origin: 'repair' }] },
@@ -283,6 +287,30 @@ describe('a recurrence report does not override the ladder', () => {
         const reading = summary.reviewLoopClassRecurrence ?? [];
         expect(reading.length, 'the class reading must be live for this case to mean anything').toBeGreaterThan(0);
         expect(reading.every((entry) => !entry.stopLineCandidate), 'a judgment class is not a stop-line candidate').toBe(true);
+
+        const action = suggestCandidateAction('review', summary);
+        expect(action.reason, JSON.stringify(action)).not.toBe('review_class_recurring');
+        expect(action.reason, JSON.stringify(action)).toBe('repair_blocking_review_findings');
+    });
+
+    it('AC-4: the origin half of the stop-line filter is driven through the route as well', async () => {
+        // **An independent review round's finding, and the same defect this change is about, one half over.** The case above
+        // exercises the `oracle === 'mechanizable'` half: its class is unrecognised, so the oracle alone decides. The *origin*
+        // half (`repairOrigin > 0`) was therefore unmeasured through the route — a route that re-derived the filter as
+        // `(entry) => entry.oracle === 'mechanizable'`, keeping one half and dropping the other, stayed green across the whole
+        // suite. The only fixture with this shape lived in another selector and carried no review record, so its assertion
+        // passed because the ladder admitted nothing, not because the filter filtered.
+        const originalOnly = [
+            { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            { at: '2', revisionId: 'rev-b', blockingIds: ['F-2'], blockingCount: 1, findings: [{ id: 'F-2', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+        ];
+        const { summary } = await fixtureWith({ rounds: originalOnly, reviewRecord: 'blocking-finding' });
+        const reading = (summary.reviewLoopClassRecurrence ?? []).find((entry) => entry.class === 'instrument-unsound');
+        expect(reading, 'the class reading must be live').toBeDefined();
+        expect(reading!.oracle, 'the oracle half must be satisfied, or this case would pass for the wrong reason').toBe('mechanizable');
+        expect(reading!.repairOrigin, 'and the origin half must be the one that decides').toBe(0);
+        expect(reading!.stopLineCandidate).toBe(false);
+        expect(summary.blockingFindings, 'the ladder must admit a repair, or the route is silent for another reason').toBeGreaterThan(0);
 
         const action = suggestCandidateAction('review', summary);
         expect(action.reason, JSON.stringify(action)).not.toBe('review_class_recurring');
