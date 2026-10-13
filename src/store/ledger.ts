@@ -1365,11 +1365,14 @@ export async function appendClaim(root: string, changeId: string, claim: Claim):
  * again for a reason that named neither. A caller that re-implemented the comparison would be the second copy this
  * repository removes most often, so the comparison lives here and both call it.
  */
-export function evidenceWriteConflict(existing: readonly Evidence[], evidence: Evidence): string | null {
+export function evidenceWriteConflict(existing: readonly Evidence[], evidence: Evidence, changeId: string): string | null {
     const recorded = existing.find((entry) => entry.id === evidence.id);
     if (!recorded) return null;
     if (JSON.stringify(recorded) === JSON.stringify(evidence)) return null;
-    return `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --id ${evidence.id} --file <item.json> --reason <why>\` when the recorded item is wrong, so the correction names the one item it changes and carries its reason.`;
+// **The printed road carries the change**, because the ledger entry point falls back to `.kata/tasks/current` when it is
+    // omitted (an independent round measured that: the remedy then refused instead of re-aiming). The id is a parameter rather
+    // than a default so a caller cannot forget it.
+    return `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --change ${changeId} --id ${evidence.id} --file <item.json> --reason <why>\` when the recorded item is wrong, so the correction names the change and the one item it touches, and carries its reason.`;
 }
 
 /** Refuse ambiguity before either narrow or wide replacement can choose a record silently. */
@@ -1389,7 +1392,7 @@ export async function appendEvidence(
 ): Promise<{ ok: true; item: Evidence; written: boolean } | { ok: false; why: string }> {
     return mutate(root, changeId, async () => {
         const items = (await readDocumentForWrite<Evidence[]>(root, changeId, FILES.evidence)) ?? [];
-        const why = evidenceWriteConflict(items, evidence);
+        const why = evidenceWriteConflict(items, evidence, changeId);
         if (why) return { ok: false as const, why };
         const existing = items.find((entry) => entry.id === evidence.id);
         if (existing) return { ok: true as const, item: existing, written: false };

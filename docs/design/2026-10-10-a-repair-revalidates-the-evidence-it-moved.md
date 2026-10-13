@@ -70,8 +70,8 @@
 
 | 本 change 的 AC | 属性 | 选择器 | falsifier |
 |---|---|---|---|
-| **AC-1** | **重瞄一条证据是一条命令**：`ledger evidence replace --change <id> --id <evidence-id> --reason <why>` 只更新那一条的锚点，其余证据的绑定（id / file / find / replace / claim 引用）**逐字不变**——所以重瞄**不可能**静默丢掉其余证据 | `tests/unit/re-aiming-one-evidence-item.test.ts` | 让 `--id` 退化成整集替换（用提交里的集合覆盖）⇒ 用例红 |
-| **AC-2** | 封存的锚点拒绝**印出那条可执行的命令**（点名 `--id`），而不是要求提交整集 | `tests/unit/a-moved-anchor-refuses-the-seal.test.ts` | 把文案改回 `--file <整集>` ⇒ 用例红（断言的是"命令里含 `--id` 且不含 `--file`"这一**性质**，不是字符串） |
+| **AC-1** | **重瞄一条证据是一条命令**：`ledger evidence replace --change <id> --id <evidence-id> --file <item.json> --reason <why>` 只更新那一条的锚点，其余证据的绑定（id / file / find / replace / claim 引用）**逐字不变**——所以重瞄**不可能**静默丢掉其余证据 | `tests/unit/re-aiming-one-evidence-item.test.ts` | 让 `--id` 退化成整集替换（用提交里的集合覆盖）⇒ 用例红 |
+| **AC-2** | 封存的锚点拒绝**印出那条可执行的命令**（点名 `--id`），而不是要求提交整集 | `tests/unit/a-moved-anchor-refuses-the-seal.test.ts` | 把文案改回 `--file <整集>` ⇒ 用例红（断言的是"命令里含 `--id` 与 `--change`，且**不含整集形式的占位符** `--file <your evidence submission>`"这一**性质**，不是整串字符串比对（窄形式自己必须带 `--file <item.json>`，所以"不含 `--file`"不是它断言的东西）） |
 | **AC-3** | **分工被断言而非写在注释里**：锚点仍唯一匹配、但变异不再生效的证据，**封存不拒**；而 `ledger evidence verify` 仍报 `refuted` | `tests/unit/an-anchor-that-still-matches-is-not-a-verdict.test.ts` | 让封存顺带断言 verdict ⇒ 用例红（把充分条件混进必要条件） |
 
 四个 AC 各自独立选择器文件（共用文件会被 `dedupeChecks` 折叠，本仓已因此三次留下没有证据的验收项）。

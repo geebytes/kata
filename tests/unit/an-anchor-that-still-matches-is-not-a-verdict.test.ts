@@ -18,6 +18,43 @@ import { anchorRefusal, locateAnchor } from '../../src/quality/falsifier-anchors
  * also asserted verdicts would have refused a change whose anchors were all pointing correctly.
  */
 const preflight = readFileSync(join(process.cwd(), 'src', 'workflow', 'seal-preflight.ts'), 'utf8');
+const anchorCheckModule = readFileSync(join(process.cwd(), 'src', 'quality', 'falsifier-anchors.ts'), 'utf8');
+
+/**
+ * **The verdict reads inside one named function, found by syntax rather than by spelling.** Aliases, bracket access and
+ * destructuring still read the forbidden property even when no particular helper name is present, so the scan walks the
+ * function node. A review round measured that the first version covered only `collectSealPreflight`: a verdict read added
+ * inside `declaredAnchorProblems` — the check's other half, in another file — would have left the scan green while the
+ * claim says the check reaches no verdict reader.
+ */
+function verdictReadsIn(file: string, text: string, functionName: string): string[] {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const collect = source.statements.find(
+        (statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && statement.name?.text === functionName,
+    );
+    expect(collect, `${functionName} must exist in ${file}`).toBeDefined();
+    const propertyName = (node: ts.Node): string | undefined => {
+        if (ts.isPropertyAccessExpression(node)) return node.name.text;
+        if (ts.isElementAccessExpression(node)) {
+            const argument = node.argumentExpression;
+            return argument && (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) ? argument.text : undefined;
+        }
+        if (ts.isBindingElement(node)) {
+            const name = node.propertyName ?? node.name;
+            return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+        }
+        return undefined;
+    };
+    const isVerdictsProperty = (name: string | undefined): boolean => name?.normalize('NFKC').replace(/[^a-z]/giu, '').toLowerCase() === 'verdicts';
+    const readers: string[] = [];
+    const visit = (node: ts.Node): void => {
+        if (isVerdictsProperty(propertyName(node))) readers.push(node.getText(source));
+        ts.forEachChild(node, visit);
+    };
+    visit(collect!);
+    return readers;
+}
+
 
 describe('an anchor that still matches is not a verdict', () => {
     it('does not refuse an anchor that matches exactly once, whatever the verdict says', () => {
@@ -25,36 +62,11 @@ describe('an anchor that still matches is not a verdict', () => {
         expect(anchorRefusal(locateAnchor('only once\n', 'only once'), 'src/a.ts', 'only once')).toBeUndefined();
     });
 
-    it('reads no verdict: the seal path holds no verdict reader', () => {
-        // Check the syntax rather than a few reader spellings: aliases, bracket access, and destructuring still read the
-        // forbidden property even when no particular helper name is present.
-        const source = ts.createSourceFile('seal-preflight.ts', preflight, ts.ScriptTarget.Latest, true);
-        const collect = source.statements.find(
-            (statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && statement.name?.text === 'collectSealPreflight',
-        );
-        expect(collect).toBeDefined();
-
-        const propertyName = (node: ts.Node): string | undefined => {
-            if (ts.isPropertyAccessExpression(node)) return node.name.text;
-            if (ts.isElementAccessExpression(node)) {
-                const argument = node.argumentExpression;
-                return argument && (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) ? argument.text : undefined;
-            }
-            if (ts.isBindingElement(node)) {
-                const name = node.propertyName ?? node.name;
-                return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
-            }
-            return undefined;
-        };
-        const isVerdictsProperty = (name: string | undefined): boolean => name?.normalize('NFKC').replace(/[^a-z]/giu, '').toLowerCase() === 'verdicts';
-        const verdictReaders: string[] = [];
-        const visit = (node: ts.Node): void => {
-            if (isVerdictsProperty(propertyName(node))) verdictReaders.push(node.getText(source));
-            ts.forEachChild(node, visit);
-        };
-        visit(collect!);
-
-        expect(verdictReaders).toEqual([]);
+    it('reads no verdict: neither half of the anchor check holds a verdict reader', () => {
+        // Both functions the claim names, because the check is split across two files: seal-preflight holds the preflight, and
+        // falsifier-anchors holds the walk it delegates to. Covering one and claiming both is what round 9 measured.
+        expect(verdictReadsIn('seal-preflight.ts', preflight, 'collectSealPreflight')).toEqual([]);
+        expect(verdictReadsIn('falsifier-anchors.ts', anchorCheckModule, 'declaredAnchorProblems')).toEqual([]);
         expect(preflight).toMatch(/no test run, no verdict/u);
     });
 

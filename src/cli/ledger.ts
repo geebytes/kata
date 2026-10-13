@@ -742,7 +742,7 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 const priorConflicts = conflicts.slice(0, index).filter((entry) => entry.id === item.id && JSON.stringify(entry) !== JSON.stringify(item));
                 const why = priorConflicts.length > 0
                     ? `${item.id} appears twice in this submission with different content; a submission is one set of facts, so the same id cannot carry two.`
-                    : evidenceWriteConflict(ledger.evidence, item);
+                    : evidenceWriteConflict(ledger.evidence, item, changeId);
                 if (why) {
                     fail({ command: 'ledger evidence add', error: why, rejectedItem: item.id });
                     return;
@@ -777,7 +777,8 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             // already carries the same content writes nothing — which used to be reported only inside each item's
             // `written: false` while the top-level answer said `ok: true`. An author re-aiming a falsifier therefore got a
             // success and kept the old mutation site and the old verdict; the field below names the ids that did not land,
-            // and the note names the command that rewrites a set.
+            // and the note names the command that rewrites one recorded item (it named a set before the narrow form existed,
+            // and named a command missing `--change`/`--file` in between — a road the entry point cannot walk).
             const unchanged = read.submission.evidence
                 .filter((item) => ledger.evidence.some((entry) => entry.id === item.id && JSON.stringify(entry) === JSON.stringify(item)))
                 .map((item) => item.id);
@@ -786,7 +787,7 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 command: 'ledger evidence add',
                 claims: read.submission.claims.length,
                 evidence: read.submission.evidence.length,
-                ...(unchanged.length > 0 ? { unchanged, unchangedNote: 'these ids were already recorded with this exact content, so nothing was written for them; `ledger evidence replace --id <evidence-id> --file <item.json> --reason <why>` is the command that rewrites a recorded item' } : {}),
+                ...(unchanged.length > 0 ? { unchanged, unchangedNote: `these ids were already recorded with this exact content, so nothing was written for them; \`ledger evidence replace --change ${changeId} --id <evidence-id> --file <item.json> --reason <why>\` is the command that rewrites one recorded item` } : {}),
                 note: 'claims and evidence are written as they arrive; there is no submission document to lose',
             });
             return;

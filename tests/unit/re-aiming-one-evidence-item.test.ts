@@ -131,9 +131,10 @@ describe('re-aiming one evidence item', () => {
             id: 'E1', type: 'static_witness', ref: 'src/subject.ts', assertion: 'contains:subject',
         } as Evidence;
         const incoming = { ...stored, assertion: 'contains:something-else' } as Evidence;
-        const conflict = evidenceWriteConflict([stored], incoming);
+        const conflict = evidenceWriteConflict([stored], incoming, 'held');
         expect(conflict, 'a changed item is a conflict').not.toBeNull();
-        expect(conflict, 'the backup names the item and a file to hand it in').toMatch(/--id E1/);
+        expect(conflict, 'the backup names the change, the item and a file to hand it in').toMatch(/--change held/);
+        expect(conflict).toMatch(/--id E1/);
         expect(conflict).toMatch(/--file/);
         expect(conflict, 'and the reason the write is refused').toMatch(/--reason/);
 
@@ -173,6 +174,7 @@ describe('re-aiming one evidence item', () => {
         const second = await ledgerJson(root, ['evidence', 'add', '--file', submission, '--reason', 'declare the witness again']);
         const note = String(second.payload.unchangedNote ?? '');
         expect(note, 'the note is produced at all').not.toBe('');
+        expect(note, 'the change it is about, or the entry point falls back to .kata/tasks/current').toMatch(/--change held/);
         expect(note).toMatch(/--id/);
         expect(note).toMatch(/--file/);
     });
