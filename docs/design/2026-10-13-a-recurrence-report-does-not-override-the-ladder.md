@@ -39,6 +39,19 @@ Single-point mutations, each proven parseable and byte-restored: the class branc
 
 `tests/unit/a-recurring-review-loop-is-reported.test.ts` (the contract the archived change `the-review-loop-carries-its-defect-classes` left) asserted the two recurrence routes in a state carrying **no review record at all**, so the ladder had nothing to repair and the route it asserted was one `kata-cli build` refuses. Its fixture now carries a blocking finding bound to the sealed revision — the state that makes the route walkable — so the property it names is still pinned rather than weakened. Two things in that fixture had to become real for the reader to accept it: the task record is created through `createTask` instead of written by hand (the router never opened it through the schema until a case carried a review record), and the new option is `blockingFinding`.
 
+
+## Review history, and what is *not* certified here
+
+The change took five review rounds. Rounds 1–4 each returned findings and each was repaired: round 1 three notes, round 2 one major (a boundary stated against the id count alone) plus a minor and three notes, round 3 one major (a claim asserting a route in the state the ladder admits nothing) plus three minors, round 4 two majors (a claim omitting the invariants table, and the same boundary unqualified by the candidate count) plus a minor and a note. Every repair came with a case and a single-point mutation; the declared falsifiers were re-read at each new subject and none has ever been falsified.
+
+**Round 5 produced no report.** It was dispatched against the pre-restatement claim text, was still reading when the claims were restated to the branch-local form, and terminated without writing a findings file. So the branch-local claim form introduced by this round is **not independently reviewed**: nothing but the author's own reading and the falsifier re-reads stands behind it.
+
+What the current revision *is* certified by: the seal (`pathDigests` over the three declared paths), Verify PASS on AC-1…AC-4, the ledger's 15 declared falsifiers re-read `0 → 1 → 0` at the current subject, and an independent challenge (`X1`, reproducing falsifier `E13`) bound to that same subject.
+
+**What `approved | 0 findings` does not mean.** Rounds 3 and 4 raised three majors against earlier claim text. Their records bind revisions that have since been superseded, so they left the bar by *staleness*, not by disposition — the mechanism has no way to mark a superseded finding fixed (`findings dispose` does not exist), and the only route that replaces a finding's slot is a newer round's record. A reader who takes "approved with no findings" as "an independent round confirmed these repairs" would be reading something this change cannot claim.
+
+The defect class behind the whole loop — a claim whose subject is the router's answer in a state, which every round could falsify by naming one more branch above it — is queued as **I-41** in `docs/engineering/2026-10-10-unified-kata-defect-queue.md`, with the mechanism-level remedy: a claim's subject may only be a branch, a derivation or a branch-local publication, never the router's output in a state.
+
 ## Boundaries
 
 This change does not weaken strict review, close findings by assertion, fabricate a major finding, or alter the semantics of `stopLineCandidate`. It changes only the navigation consequence of a diagnostic when the repair ladder has no admissible repair.
