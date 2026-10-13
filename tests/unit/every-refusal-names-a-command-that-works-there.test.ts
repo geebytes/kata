@@ -23,8 +23,13 @@ const roots: string[] = [];
  *
  * The vocabulary below is the parser's own, not a guess: an earlier version looked for "unknown ledger flag" while the parser
  * says "--klasses is not a flag the ledger family reads", and a renamed flag sailed through the guard built to catch it.
+ *
+ * **A missing required flag is a usage refusal too**, and it was missing from this vocabulary until a falsifier's own mutation
+ * measured it: a road printed without `--file` came back as "... is required." from the parser, which no pattern here
+ * matched, so the guard stayed green with an unrunnable road in the message. The parser's required-flag sentence is the
+ * phrase `is required`, and it is in the vocabulary now.
  */
-const USAGE_REFUSAL = /is not a flag the ledger family reads|unknown ledger flag|unknown verb|requires --reason|is not a known|^usage:|unknown scope|unknown subcommand|not a function|Cannot read/i;
+const USAGE_REFUSAL = /is not a flag the ledger family reads|unknown ledger flag|unknown verb|requires --reason|is not a known|^usage:|unknown scope|unknown subcommand|not a function|Cannot read|is required/i;
 
 async function git(root: string, args: string[]): Promise<void> {
     await run('git', args, { cwd: root });
