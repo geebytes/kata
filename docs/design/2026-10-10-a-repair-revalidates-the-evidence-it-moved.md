@@ -95,3 +95,17 @@
 | 一次封存 + Verify + 账本 | ~10 min（既有流程，未增加重跑） |
 | 独立审查轮 | 一次（17–40 min） |
 | **合计** | 约半天 + 一轮审查；它买到的是**不再需要人手工重瞄**（今天为此在三个轮次里漏了 9 + 3 + 1 次） |
+
+---
+
+## 6. 2026-10-13 严格复核后的修复决定
+
+第 1 轮复核确认三条原验收仍成立，但发现它们的执行面与仪器有五处缺口；本轮以同一份 AC 的修复记录它们，而不扩大验收语义：
+
+1. 窄形式的 `--file <item.json>` 必须真的接受它所命名的裸 evidence item；若文件是 submission，则窄形式只读取其 evidence，不为未使用的 claims 半边拒绝。宽形式仍要求完整 submission。
+2. 窄形式的所有拒绝都经 CLI 的 JSON 信封返回；store 继续以异常表达写入拒绝，CLI 是唯一负责转换为机器可读输出的边界。
+3. 一个 evidence id 在一次替换输入中只能出现一次。该检查在 store 的 `replaceEvidence` 中统一执行，窄形式在选择 item 前问同一规则，避免窄形式择第一项、宽形式写两项。
+4. AC-1 的 CLI 选择器直接驱动 `runLedgerCommand`，不再依赖 gitignored 的 `dist/cli.js`；否则 seal sandbox 的跳过会让 source 回归无法变红。
+5. AC-3 的静态边界从 `collectSealPreflight` 的函数定义开始并延至下一个 export，覆盖实际锚点分支；它仍只证明 seal path 不读 verdict，不能代替 `ledger evidence verify` 的运行结论。
+
+这些调整只涉及已声明的 `src/cli/ledger.ts`、`src/store/ledger.ts` 与既有选择器；没有改变封存检查只读、锚点唯一不等于 mutation 支持、或宽形式完整替换的边界。

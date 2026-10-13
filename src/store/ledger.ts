@@ -1372,6 +1372,16 @@ export function evidenceWriteConflict(existing: readonly Evidence[], evidence: E
     return `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --reason <why>\` when the recorded item is wrong, so the correction carries its reason.`;
 }
 
+/** Refuse ambiguity before either narrow or wide replacement can choose a record silently. */
+export function evidenceSetConflict(items: readonly Evidence[]): string | null {
+    const seen = new Set<string>();
+    for (const item of items) {
+        if (seen.has(item.id)) return `${item.id} appears twice in this evidence set; one id must name one fact.`;
+        seen.add(item.id);
+    }
+    return null;
+}
+
 export async function appendEvidence(
     root: string,
     changeId: string,
@@ -1471,6 +1481,8 @@ export async function replaceEvidence(
         const verdicts = (await readDocumentForWrite<EvidenceVerdict[]>(root, changeId, FILES.verdicts)) ?? [];
         const runs = await readRecordsForWrite<LedgerRun>(root, changeId, FILES.runs, STRING_FIELDS.runs);
         const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
+        const duplicate = evidenceSetConflict(items);
+        if (duplicate !== null) throw new Error(duplicate);
         const changed = items.filter((item) => {
             const existing = before.find((entry) => entry.id === item.id);
             return existing === undefined || JSON.stringify(existing) !== JSON.stringify(item);

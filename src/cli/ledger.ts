@@ -14,7 +14,7 @@ import { oracleFor, requireDefectClass } from '../quality/defect-classes.js';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, evidenceWriteConflict, replaceEvidence, replaceOneEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
+import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, evidenceWriteConflict, evidenceSetConflict, replaceEvidence, replaceOneEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerTierForDeclaredPaths, ledgerVerdict, tierOverrideFromPlan } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -31,7 +31,7 @@ import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { validateArtefact } from '../core/schema.js';
 import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
-import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type CurrentAssuranceLevel, type Claim, type RiskClass, type Severity, type VerdictProducer } from '../kernel/types.js';
+import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type CurrentAssuranceLevel, type Claim, type Evidence, type RiskClass, type Severity, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
 
@@ -57,6 +57,17 @@ function emit(payload: Record<string, unknown>): void {
 function fail(payload: Record<string, unknown>): void {
     emit({ ok: false, ...payload });
     process.exitCode = 1;
+}
+
+function narrowEvidenceFromFile(value: unknown): { ok: true; evidence: Evidence[] } | { ok: false; errors: string[] } {
+    const rawEvidence = typeof value === 'object' && value !== null && !Array.isArray(value)
+        && Array.isArray((value as { evidence?: unknown }).evidence)
+        ? (value as { evidence: unknown[] }).evidence
+        : [value];
+    const read = readSubmission({ claims: [], evidence: rawEvidence });
+    if (!read.ok) return read;
+    const conflict = evidenceSetConflict(read.submission.evidence);
+    return conflict === null ? { ok: true, evidence: read.submission.evidence } : { ok: false, errors: [conflict] };
 }
 
 /**
@@ -796,31 +807,35 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 return;
             }
             if (oneId !== undefined) {
-                const one = readSubmission(JSON.parse(await readFile(file, 'utf8')) as unknown);
-                if (!one.ok) {
-                    fail({ command: 'ledger evidence replace', errors: one.errors });
-                    return;
-                }
-                const item = one.submission.evidence.find((entry) => entry.id === oneId);
-                if (item === undefined) {
-                    fail({
+                try {
+                    const one = narrowEvidenceFromFile(JSON.parse(await readFile(file, 'utf8')) as unknown);
+                    if (!one.ok) {
+                        fail({ command: 'ledger evidence replace', errors: one.errors });
+                        return;
+                    }
+                    const item = one.evidence.find((entry) => entry.id === oneId);
+                    if (item === undefined) {
+                        fail({
+                            command: 'ledger evidence replace',
+                            error: `--file holds no item with id ${oneId}, so there is nothing to re-aim: it holds ${one.evidence.map((entry) => entry.id).join(', ') || '(nothing)'}.`,
+                        });
+                        return;
+                    }
+                    const narrow = await replaceOneEvidence(options.root, changeId, item, reason.trim());
+                    emit({
+                        ok: true,
                         command: 'ledger evidence replace',
-                        error: `--file holds no item with id ${oneId}, so there is nothing to re-aim: it holds ${one.submission.evidence.map((entry) => entry.id).join(', ') || '(nothing)'}.`,
+                        change: changeId,
+                        replaced: narrow.replaced,
+                        evidenceId: oneId,
+                        untouched: narrow.untouched,
+                        droppedVerdicts: narrow.droppedVerdicts,
+                        citationsWhoseReadingWasDropped: narrow.citationsWhoseReadingWasDropped,
+                        note: 'the narrow form: every item other than this one kept its binding byte-identical',
                     });
-                    return;
+                } catch (error) {
+                    fail({ command: 'ledger evidence replace', error: (error as Error).message });
                 }
-                const narrow = await replaceOneEvidence(options.root, changeId, item, reason.trim());
-                emit({
-                    ok: true,
-                    command: 'ledger evidence replace',
-                    change: changeId,
-                    replaced: narrow.replaced,
-                    evidenceId: oneId,
-                    untouched: narrow.untouched,
-                    droppedVerdicts: narrow.droppedVerdicts,
-                    citationsWhoseReadingWasDropped: narrow.citationsWhoseReadingWasDropped,
-                    note: 'the narrow form: every item other than this one kept its binding byte-identical',
-                });
                 return;
             }
             const read = readSubmission(JSON.parse(await readFile(file, 'utf8')) as unknown);

@@ -1,24 +1,20 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
+import { appendEvidence, replaceOneEvidence } from '../../src/store/ledger.js';
+import { runLedgerCommand } from '../../src/cli/ledger.js';
 
 /**
  * AC-1 — re-aiming one evidence item is one command, and it leaves every other item's binding byte-identical.
  *
- * The measured harm (2026-10-12/13, twice): the only door was `ledger evidence replace --file <set>`, which replaces the set
- * with what the author submits — so re-aiming a single anchor meant re-typing every other item, and evidence was nearly lost
- * both times (once recovered by hand from a full-set submission). The seal's own refusal printed that wide form as its remedy,
- * which made the loss the *prescribed* road.
- *
- * The criterion is the property, not the command's shape: after the narrow form, the untouched items are byte-identical and
- * the re-aimed one carries its new anchor.
+ * The narrow command is deliberately driven in-process. `dist/cli.js` is gitignored and absent in the seal's sandbox;
+ * exercising it would turn a regression in `src/cli/ledger.ts` into a silent skip. The store carries the data invariant,
+ * while this file additionally proves the source CLI parses and envelopes the narrow form.
  */
 const roots: string[] = [];
-const CLI = join(process.cwd(), 'dist', 'cli.js');
 
 function fixture(): string {
     const root = mkdtempSync(join(tmpdir(), 'kata-reaim-'));
@@ -26,37 +22,43 @@ function fixture(): string {
     return root;
 }
 
-function cli(root: string, args: string[]): { ok: boolean; output: string } {
+async function ledgerJson(root: string, args: string[]): Promise<{ exitCode: number; payload: Record<string, unknown> }> {
+    const chunks: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+    });
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
     try {
-        return { ok: true, output: execFileSync('node', [CLI, ...args], { cwd: root, encoding: 'utf8', stdio: 'pipe' }) };
-    } catch (error) {
-        return { ok: false, output: `${(error as { stdout?: string }).stdout ?? ''}${(error as { stderr?: string }).stderr ?? ''}` };
+        await runLedgerCommand(args, { root, changeId: 'held' });
+        const line = chunks.join('').trim().split('\n').filter((entry) => entry.trim().startsWith('{')).at(-1);
+        return { exitCode: process.exitCode ?? 0, payload: line === undefined ? {} : JSON.parse(line) as Record<string, unknown> };
+    } finally {
+        stdout.mockRestore();
+        process.exitCode = previousExitCode;
     }
 }
 
-async function seeded(name: string): Promise<{ root: string; evidence: unknown }> {
+function evidence(id: string, find: string, replace: string): Record<string, unknown> {
+    return { id, type: 'executable_falsifier', command: `vitest run tests/unit/${id}.test.ts`, mutation: { file: 'src/a.ts', find, replace } };
+}
+
+async function seeded(): Promise<{ root: string }> {
     const root = fixture();
     await initLayout(root);
     await createTask({ root, id: 'held', title: 'Held', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
     mkdirSync(join(root, 'src'), { recursive: true });
     writeFileSync(join(root, 'src', 'a.ts'), 'export const a = 1;\nexport const b = 2;\n');
-    const submission = {
-        claims: [{ id: 'C1', statement: 'the property holds', riskClass: 'consistency', severity: 'major', dependsOn: ['path:src/a.ts'], evidenceIds: ['E1', 'E2'] }],
-        evidence: [
-            { id: 'E1', type: 'executable_falsifier', command: 'vitest run tests/unit/x.test.ts', mutation: { file: 'src/a.ts', find: 'export const a = 1;', replace: 'export const a = 2;' } },
-            { id: 'E2', type: 'executable_falsifier', command: 'vitest run tests/unit/y.test.ts', mutation: { file: 'src/a.ts', find: 'export const b = 2;', replace: 'export const b = 3;' } },
-        ],
-    };
-    // **Seeded through the store, not the CLI.** `dist/cli.js` is a gitignored artifact, and the seal runs the suite in a
-    // sandbox copy that does not contain it (measured: with `dist/` moved aside, every case in this file failed with a module
-    // error — which is exactly how this change's first seal was refused). A case whose *subject* needs the bundle is not a
-    // case about the store, so the seeding happens where the property lives.
-    const { appendEvidence } = await import('../../src/store/ledger.js');
-    for (const item of submission.evidence) {
+    for (const item of [evidence('E1', 'export const a = 1;', 'export const a = 2;'), evidence('E2', 'export const b = 2;', 'export const b = 3;')]) {
         const added = await appendEvidence(root, 'held', item as never);
         expect(added.ok, JSON.stringify(added)).toBe(true);
     }
-    return { root, evidence: submission };
+    return { root };
+}
+
+function stored(root: string): Array<{ id: string; mutation: { find: string } }> {
+    return JSON.parse(readFileSync(join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json'), 'utf8')) as Array<{ id: string; mutation: { find: string } }>;
 }
 
 afterEach(() => {
@@ -64,86 +66,56 @@ afterEach(() => {
 });
 
 describe('re-aiming one evidence item', () => {
-    it('updates that item and leaves every other item byte-identical', async () => {
-        const { root } = await seeded('seed');
-        if (!existsSync(CLI)) return;
-        // The bundle is gitignored and absent in the seal's sandbox copy; the in-process case carries the property.
-        // The stored document is the array itself (the ledger writes what `readDocumentForWrite<Evidence[]>` reads).
-        const stored = (): Array<{ id: string; mutation: { find: string } }> =>
-            JSON.parse(readFileSync(join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json'), 'utf8')) as Array<{ id: string; mutation: { find: string } }>;
-        const beforeE2 = JSON.stringify(stored().find((entry) => entry.id === 'E2'));
-
+    it('accepts the bare item named by the seal, updates it, and leaves every other item byte-identical', async () => {
+        const { root } = await seeded();
+        const beforeE2 = JSON.stringify(stored(root).find((entry) => entry.id === 'E2'));
         const item = join(root, 'item.json');
-        writeFileSync(item, `${JSON.stringify({
-            claims: [{ id: 'C1', statement: 'the property holds', riskClass: 'consistency', severity: 'major', dependsOn: ['path:src/a.ts'], evidenceIds: ['E1', 'E2'] }],
-            evidence: [{ id: 'E1', type: 'executable_falsifier', command: 'vitest run tests/unit/x.test.ts', mutation: { file: 'src/a.ts', find: 'export const a = 2;', replace: 'export const a = 3;' } }],
-        })}\n`);
-        const reaimed = cli(root, ['ledger', 'evidence', 'replace', '--change', 'held', '--id', 'E1', '--file', item, '--reason', 'the repair moved the line this anchor pointed at']);
-        expect(reaimed.ok, reaimed.output).toBe(true);
-        const payload = JSON.parse(reaimed.output) as { replaced: number; untouched: string[]; evidenceId: string };
-        expect(payload.replaced).toBe(1);
-        expect(payload.evidenceId).toBe('E1');
-        // **The property**: the item that was not named is unchanged, byte for byte.
-        expect(payload.untouched).toEqual(['E2']);
-        expect(JSON.stringify(stored().find((entry) => entry.id === 'E2'))).toBe(beforeE2);
-        expect(stored().find((entry) => entry.id === 'E1')?.mutation.find).toBe('export const a = 2;');
+        writeFileSync(item, `${JSON.stringify(evidence('E1', 'export const a = 2;', 'export const a = 3;'))}\n`);
+
+        const reaimed = await ledgerJson(root, ['evidence', 'replace', '--change', 'held', '--id', 'E1', '--file', item, '--reason', 'the repair moved the line this anchor pointed at']);
+
+        expect(reaimed.exitCode).toBe(0);
+        expect(reaimed.payload).toMatchObject({ ok: true, command: 'ledger evidence replace', replaced: 1, evidenceId: 'E1', untouched: ['E2'] });
+        expect(JSON.stringify(stored(root).find((entry) => entry.id === 'E2'))).toBe(beforeE2);
+        expect(stored(root).find((entry) => entry.id === 'E1')?.mutation.find).toBe('export const a = 2;');
     });
 
-    it('does the same in process, so the store is the instrument and not the bundle', async () => {
-        // **Why the store and not the CLI.** The CLI cases above drive `dist/cli.js`, so a mutation in `src/store/ledger.ts`
-        // is invisible to them (measured: M1 and M2 stayed green until these cases existed — the same stale-bundle trap the
-        // gates change paid for). The property lives in the store, so its instrument must run the store.
-        const { replaceOneEvidence } = await import('../../src/store/ledger.js');
-        const { root } = await seeded('in-process');
-        const path = join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json');
-        const read = (): Array<{ id: string; mutation: { find: string } }> => JSON.parse(readFileSync(path, 'utf8')) as Array<{ id: string; mutation: { find: string } }>;
-        const beforeE2 = JSON.stringify(read().find((entry) => entry.id === 'E2'));
+    it('uses the same store operation in process, so the data invariant is not a bundle artifact', async () => {
+        const { root } = await seeded();
+        const beforeE2 = JSON.stringify(stored(root).find((entry) => entry.id === 'E2'));
+        const outcome = await replaceOneEvidence(root, 'held', evidence('E1', 'export const a = 2;', 'export const a = 3;') as never, 'the repair moved the line this anchor pointed at');
 
-        const outcome = await replaceOneEvidence(root, 'held', {
-            id: 'E1',
-            type: 'executable_falsifier',
-            command: 'vitest run tests/unit/x.test.ts',
-            mutation: { file: 'src/a.ts', find: 'export const a = 2;', replace: 'export const a = 3;' },
-        } as never, 'the repair moved the line this anchor pointed at');
-
-        expect(outcome.replaced).toBe(1);
-        expect(outcome.untouched).toEqual(['E2']);
-        expect(JSON.stringify(read().find((entry) => entry.id === 'E2'))).toBe(beforeE2);
-        expect(read().find((entry) => entry.id === 'E1')?.mutation.find).toBe('export const a = 2;');
-        // An id the ledger does not hold is refused by name rather than appended.
-        await expect(replaceOneEvidence(root, 'held', { id: 'E9', type: 'executable_falsifier', command: 'x', mutation: { file: 'src/a.ts', find: 'x', replace: 'y' } } as never, 'x'))
-            .rejects.toThrow(/holds no evidence item E9/u);
-        expect(read().map((entry) => entry.id).sort()).toEqual(['E1', 'E2']);
+        expect(outcome).toMatchObject({ replaced: 1, untouched: ['E2'] });
+        expect(JSON.stringify(stored(root).find((entry) => entry.id === 'E2'))).toBe(beforeE2);
+        expect(stored(root).find((entry) => entry.id === 'E1')?.mutation.find).toBe('export const a = 2;');
     });
 
-    it('refuses an id the ledger does not hold, by name, and writes nothing', async () => {
-        const { root } = await seeded('unknown');
-        if (!existsSync(CLI)) return;
-        // The bundle is gitignored and absent in the seal's sandbox copy; the in-process case carries the property.
-        const path = join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json');
-        const before = readFileSync(path, 'utf8');
-        const item = join(root, 'item.json');
-        writeFileSync(item, `${JSON.stringify({
-            claims: [{ id: 'C1', statement: 'x', riskClass: 'consistency', severity: 'major', dependsOn: ['path:src/a.ts'], evidenceIds: ['E9'] }],
-            evidence: [{ id: 'E9', type: 'executable_falsifier', command: 'vitest run tests/unit/x.test.ts', mutation: { file: 'src/a.ts', find: 'x', replace: 'y' } }],
-        })}\n`);
-        const refused = cli(root, ['ledger', 'evidence', 'replace', '--change', 'held', '--id', 'E9', '--file', item, '--reason', 'x']);
-        expect(refused.ok).toBe(false);
-        expect(refused.output).toMatch(/holds no evidence item E9/u);
-        expect(refused.output).toMatch(/E1, E2|E1/u);
-        expect(readFileSync(path, 'utf8')).toBe(before);
+    it('envelopes a missing stored id instead of throwing plain stderr text', async () => {
+        const { root } = await seeded();
+        const before = readFileSync(join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json'), 'utf8');
+        const item = join(root, 'unknown.json');
+        writeFileSync(item, `${JSON.stringify(evidence('E9', 'x', 'y'))}\n`);
+
+        const refused = await ledgerJson(root, ['evidence', 'replace', '--change', 'held', '--id', 'E9', '--file', item, '--reason', 'x']);
+
+        expect(refused.exitCode).toBe(1);
+        expect(refused.payload).toMatchObject({ ok: false, command: 'ledger evidence replace' });
+        expect(String(refused.payload.error)).toMatch(/holds no evidence item E9/u);
+        expect(readFileSync(join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json'), 'utf8')).toBe(before);
     });
 
-    it('still requires a reason, and still refuses a file that does not hold the named item', async () => {
-        const { root } = await seeded('guards');
-        if (!existsSync(CLI)) return;
-        // The bundle is gitignored and absent in the seal's sandbox copy; the in-process case carries the property.
-        const item = join(root, 'item.json');
-        writeFileSync(item, `${JSON.stringify({
-            claims: [{ id: 'C1', statement: 'x', riskClass: 'consistency', severity: 'major', dependsOn: ['path:src/a.ts'], evidenceIds: ['E2'] }],
-            evidence: [{ id: 'E2', type: 'executable_falsifier', command: 'vitest run tests/unit/y.test.ts', mutation: { file: 'src/a.ts', find: 'export const b = 2;', replace: 'export const b = 4;' } }],
-        })}\n`);
-        expect(cli(root, ['ledger', 'evidence', 'replace', '--change', 'held', '--id', 'E2', '--file', item]).output).toMatch(/--reason/u);
-        expect(cli(root, ['ledger', 'evidence', 'replace', '--change', 'held', '--id', 'E1', '--file', item, '--reason', 'x']).output).toMatch(/holds no item with id E1/u);
+    it('refuses a duplicate id in either narrow or wide submission instead of choosing one silently', async () => {
+        const { root } = await seeded();
+        const duplicate = join(root, 'duplicate.json');
+        writeFileSync(duplicate, `${JSON.stringify({ claims: [], evidence: [evidence('E1', 'export const a = 11;', 'export const a = 12;'), evidence('E1', 'export const a = 22;', 'export const a = 23;')] })}\n`);
+
+        const narrow = await ledgerJson(root, ['evidence', 'replace', '--change', 'held', '--id', 'E1', '--file', duplicate, '--reason', 'x']);
+        const wide = await ledgerJson(root, ['evidence', 'replace', '--change', 'held', '--file', duplicate, '--reason', 'x']);
+
+        for (const refused of [narrow, wide]) {
+            expect(refused.exitCode).toBe(1);
+            expect(refused.payload).toMatchObject({ ok: false, command: 'ledger evidence replace' });
+            expect(JSON.stringify(refused.payload)).toMatch(/E1.*twice|twice.*E1/u);
+        }
     });
 });

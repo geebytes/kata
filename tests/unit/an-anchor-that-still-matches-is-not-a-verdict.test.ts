@@ -28,8 +28,9 @@ describe('an anchor that still matches is not a verdict', () => {
         // The property, stated as what the code may reach: the anchor half of the preflight reads files and counts, and the
         // words it uses about its own scope say so. A later edit that imported the verdict reader into this path would redden
         // the second assertion.
-        const branch = preflight.slice(preflight.indexOf('declaredAnchorProblems'));
-        const scope = branch.slice(0, branch.indexOf('return { blockers'));
+        const functionStart = preflight.indexOf('export async function collectSealPreflight');
+        const nextExport = preflight.indexOf('\nexport ', functionStart + 1);
+        const scope = preflight.slice(functionStart, nextExport === -1 ? undefined : nextExport);
         expect(scope).not.toMatch(/verdicts\.json|readVerdicts|recordVerdicts/u);
         expect(preflight).toMatch(/no test run, no verdict/u);
     });
