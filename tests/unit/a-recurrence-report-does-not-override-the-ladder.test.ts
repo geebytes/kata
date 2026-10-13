@@ -250,6 +250,43 @@ describe('a recurrence report does not override the ladder', () => {
         expect(summary.reviewLoopRecurrence?.length, 'the id reading must be live too').toBeGreaterThan(0);
 
         expect(suggestCandidateAction('review', summary)).toMatchObject({ nextSkill: '/kata-build', reason: 'review_class_recurring' });
+
+        // **The published ordering, not the arithmetic.** The two routes carry a priority (`2150 + candidates.length` against
+        // `2100 + …`) which `listTaskCandidates` sorts by, so the sharper reading is the one an operator sees first. A third
+        // verifier measured that dropping the class route's priority below the id route's base stayed green: the ordering the
+        // numbers exist for was asserted nowhere. The absolute value is deliberately not pinned — it is a published hint, and
+        // pinning it would fail on an unrelated task count.
+        const classAction = suggestCandidateAction('review', summary);
+        const idOnly = await fixtureWith({
+            rounds: [
+                { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+                { at: '2', revisionId: 'rev-b', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'contract-semantics', origin: 'original' }] },
+            ],
+            reviewRecord: 'blocking-finding',
+        });
+        const idAction = suggestCandidateAction('review', idOnly.summary);
+        expect(idAction.reason, JSON.stringify(idAction)).toBe('review_loop_recurring');
+        expect(classAction.priority, `${classAction.priority} vs ${idAction.priority}`).toBeGreaterThan(idAction.priority!);
+    });
+
+    it('AC-4: a class recurrence the design calls normal is not escalated', async () => {
+        // `classRecurrence`'s own doc says the stop-line filter is deliberate in both halves: **`mechanizable` only**, because
+        // "a `judgment` class recurring is normal — two independent rounds can each find a distinct intent omission, which is
+        // the instrument working. Escalating on that would be a false stop." A third verifier measured that deleting that half
+        // stayed green (selector and full suite) while the reason moved: an admitting ladder plus a judgment-class recurrence
+        // reported `repair_blocking_review_findings` and would report `review_class_recurring` without the filter.
+        const judgmentRounds = [
+            { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'an-unrecognised-class', origin: 'original' }] },
+            { at: '2', revisionId: 'rev-b', blockingIds: ['F-2'], blockingCount: 1, findings: [{ id: 'F-2', severity: 'major', class: 'an-unrecognised-class', origin: 'repair' }] },
+        ];
+        const { summary } = await fixtureWith({ rounds: judgmentRounds, reviewRecord: 'blocking-finding' });
+        const reading = summary.reviewLoopClassRecurrence ?? [];
+        expect(reading.length, 'the class reading must be live for this case to mean anything').toBeGreaterThan(0);
+        expect(reading.every((entry) => !entry.stopLineCandidate), 'a judgment class is not a stop-line candidate').toBe(true);
+
+        const action = suggestCandidateAction('review', summary);
+        expect(action.reason, JSON.stringify(action)).not.toBe('review_class_recurring');
+        expect(action.reason, JSON.stringify(action)).toBe('repair_blocking_review_findings');
     });
 
     it('AC-4: the phase guard is asserted for every phase it excludes, not just judge', async () => {
