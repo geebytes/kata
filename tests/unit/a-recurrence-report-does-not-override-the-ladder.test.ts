@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout, reviewPath } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
+import { writeCurrentState, type Phase } from '../../src/core/state.js';
 import { reviewRoundsPath, type ReviewRound } from '../../src/quality/repair.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
@@ -43,7 +44,7 @@ interface Fixture {
 }
 
 async function fixtureWith(
-    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding'; rounds?: ReviewRound[] } = {},
+    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding'; rounds?: ReviewRound[]; phase?: Phase } = {},
 ): Promise<Fixture> {
     const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
     roots.push(root);
@@ -75,6 +76,15 @@ async function fixtureWith(
     if (options.reviewRecord === 'blocking-finding') {
         // A finding bound to the sealed revision: the state where the ladder does admit a repair.
         await writeFile(reviewPath(root, taskId), `${JSON.stringify({ ...binding, status: 'pending', findings: [{ id: 'C-1', taskId, severity: 'blocking', message: 'the current content is wrong', falsifies: 'the route admits a repair here' }] })}\n`);
+    }
+    if (options.phase !== undefined) {
+        // The recorded phase is what the entrypoint reads: the router is asked about the state the task is actually in.
+        await writeCurrentState(root, {
+            taskId,
+            phase: options.phase,
+            actor: { id: 'kata-reviewer', role: 'reviewer' },
+            updatedAt: '2026-10-13T00:00:00.000Z',
+        });
     }
     return { root, summary: await readUpstreamSummary(root, taskId), revisionId: binding.revisionId, manifestHash: binding.manifestHash };
 }
@@ -141,5 +151,22 @@ describe('a recurrence report does not override the ladder', () => {
         const action = suggestCandidateAction('review', summary);
         expect(action.reason).not.toBe('review_loop_recurring');
         expect(action.nextSkill).not.toBe('/kata-build');
+    });
+    it('AC-2 (entrypoint): the command the operator actually runs answers with the fresh review', async () => {
+        // **The property through the entrypoint, not through the function it calls.** Everything above reads
+        // `suggestCandidateAction`, which is what the CLI calls — but the operator runs `kata-cli status`, and a router that
+        // answers correctly while the verb that reports it says something else would be the same defect one layer up. The
+        // state is the measured one: the recorded phase is `review` and the only live reading is the historical recurrence.
+        const { runLocalStatusCommand } = await import('../../src/cli/tasks.js');
+
+        const recurring = await fixtureWith({ phase: 'review' });
+        const status = await runLocalStatusCommand(taskId, { taskId, source: 'active' }, recurring.root, { withContext: false });
+        expect(status.nextAction).toMatchObject({ nextSkill: '/kata-review', role: 'reviewer', reason: 'complete_review_conclusion' });
+        expect((status.nextAction as { cliCommand?: string }).cliCommand).toContain('kata-cli review');
+
+        // The control, through the same verb: where the ladder admits the repair, the CLI still recommends it.
+        const admitting = await fixtureWith({ reviewRecord: 'blocking-finding', phase: 'review' });
+        const admittingStatus = await runLocalStatusCommand(taskId, { taskId, source: 'active' }, admitting.root, { withContext: false });
+        expect(admittingStatus.nextAction).toMatchObject({ nextSkill: '/kata-build', reason: 'review_class_recurring' });
     });
 });
