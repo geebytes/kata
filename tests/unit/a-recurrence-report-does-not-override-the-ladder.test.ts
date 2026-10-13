@@ -58,10 +58,11 @@ function stalledOnCurrentRevision(revisionId: string, manifestHash: string): Rev
 /**
  * A ledger that has decided something other than `pass`, seeded through the real CLI in the fixture's own root.
  *
- * **The router's precedence is part of what the claims say, so it is asserted rather than described.** The ledger branch sits
- * below the recurrence branches, so a decided-but-failing ledger answers `satisfy_ledger_deficits` even while a stop-line class
- * recurrence is live — an independent review round measured that C2's first clause was false in exactly that state. Seeded with
- * one claim, one witness and no challenge, so `decide` reports `insufficient` for a reason the ledger itself names.
+ * **The router's precedence is part of what the claims say, so it is asserted rather than described.** This branch sits *below*
+ * the recurrence routes, so a decided-but-failing ledger answers `satisfy_ledger_deficits` even while a stop-line class recurrence
+ * is live — not before them: it answers because the ladder admits nothing, which leaves those routes silent. A fourth review round
+ * measured that this ordering, and the document's description of it, had been stated backwards. Seeded with one claim, one witness
+ * and no challenge, so `decide` reports `insufficient` for a reason the ledger itself names.
  */
 async function seedFailingLedger(root: string): Promise<void> {
     const quiet = async (argv: string[]): Promise<void> => {
@@ -93,7 +94,7 @@ interface Fixture {
 }
 
 async function fixtureWith(
-    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding' | 'major-finding'; rounds?: ReviewRound[]; phase?: Phase; reviewMode?: 'std' | 'strict'; stalledRounds?: boolean } = {},
+    options: { reviewRecord?: 'pending-clean' | 'approved-clean' | 'blocking-finding' | 'major-finding'; rounds?: ReviewRound[]; phase?: Phase; reviewMode?: 'std' | 'strict'; stalledRounds?: boolean; verifyFailed?: boolean } = {},
 ): Promise<Fixture> {
     const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
     roots.push(root);
@@ -130,6 +131,15 @@ async function fixtureWith(
         // A `major` finding and nothing at `blocking`: under `strict` the ladder blocks on it too, which is the half of the
         // admission rule a recurrence state never asked about until an independent verifier measured it.
         await writeFile(reviewPath(root, taskId), `${JSON.stringify({ ...binding, status: 'pending', findings: [{ id: 'M-1', taskId, severity: 'major', message: 'a major problem in the current content', falsifies: 'the route admits a repair here' }] })}\n`);
+    }
+    if (options.verifyFailed) {
+        // **A state the invariants table owns, above the recurrence routes.** A failed verify bound to the sealed revision is
+        // reachable from `review` (hardVerify → review is the adjacent legal transition) and the table answers before any
+        // recurrence branch — which is what makes the claims' clauses conditional rather than universal.
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'verify.json'),
+            `${JSON.stringify({ result: 'FAIL', revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash, acceptance: [] })}\n`,
+        );
     }
     if (options.phase !== undefined) {
         // The recorded phase is what the entrypoint reads: the router is asked about the state the task is actually in.
@@ -331,43 +341,56 @@ describe('a recurrence report does not override the ladder', () => {
     });
 
     it('AC-4: the priority boundary the claim names is measured, not just stated', async () => {
-        // **A review round found the boundary sentence off by one and then found it unasserted — so it is measured here.** The
-        // class route publishes `2150 + candidates.length` and the id route `2100 + ids`, so the crossover is `ids > 50 +
-        // candidates`: with one stop-line candidate, 52 recurring ids publish the strictly higher number, and at exactly 51 the
-        // two publish the same `2151`, where `listTaskCandidates`' tiebreak decides rather than the recurrence. A claim that
-        // names a boundary nobody measures is the shape this change exists to remove, so the three regimes are asserted: below
-        // it the class route wins, at it the numbers are equal, above it the id route wins.
-        const classRoute = async (): Promise<number> => {
-            const { summary } = await fixtureWith({
-                rounds: [
-                    { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
-                    { at: '2', revisionId: 'rev-b', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
-                ],
-                reviewRecord: 'blocking-finding',
-            });
-            return suggestCandidateAction('review', summary).priority!;
-        };
-        const idRouteWith = async (ids: number): Promise<number> => {
-            // An id counts as recurring only when it appears in **two or more revisions**, so both rounds carry the same ids;
-            // one round each would leave every id with a single revision and the id route would never fire (measured: 1001,
-            // the ladder's own repair route, because the reading was empty).
-            const recurring = Array.from({ length: ids }, (_, index) => `F-${index + 1}`);
+        // **Two review rounds narrowed this.** The first found the boundary sentence unasserted; the second found it stated
+        // against the id count alone while the class route publishes `2150 + candidates.length` against `2100 + ids` — so the
+        // crossover is `ids > 50 + candidates`, and the 51/52 figures hold only at exactly one candidate. Both candidate counts
+        // are measured here, which is what makes the formula a reading rather than a sentence.
+        const recurrenceIds = (count: number): string[] => Array.from({ length: count }, (_, index) => `F-${index + 1}`);
+        const idOnlyRounds = (ids: number): ReviewRound[] => {
+            // An id counts as recurring only when it appears in **two or more revisions**, so both rounds carry the same ids
+            // (one round each leaves every id with a single revision and the id route never fires — measured: priority 1001).
+            const recurring = recurrenceIds(ids);
             const findings = recurring.map((id) => ({ id, severity: 'major', class: 'contract-semantics', origin: 'original' }));
-            const rounds = [
+            return [
                 { at: '1', revisionId: 'rev-a', blockingIds: recurring, blockingCount: ids, findings },
                 { at: '2', revisionId: 'rev-b', blockingIds: recurring, blockingCount: ids, findings },
             ];
-            const { summary } = await fixtureWith({ rounds, reviewRecord: 'blocking-finding' });
-            expect(summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'the class reading must not be a stop-line candidate here').toBe(false);
+        };
+        // Two mechanizable classes, each carrying a finding that came back inside a repair: `classRecurrence` makes every such
+        // class a stop-line candidate, so the class route's count follows the number of classes rather than being fixed at one.
+        const classRounds = (candidates: number): ReviewRound[] => {
+            const classes = ['instrument-unsound', 'one-fact-derived-twice'].slice(0, candidates);
+            return [1, 2].map((round) => ({
+                at: String(round),
+                revisionId: round === 1 ? 'rev-a' : 'rev-b',
+                blockingIds: [`F-${round}`],
+                blockingCount: 1,
+                findings: classes.map((name, index) => ({ id: `F-${round}-${index}`, severity: 'major', class: name, origin: round === 1 ? 'original' : 'repair' })),
+            }));
+        };
+        const classPriority = async (candidates: number): Promise<number> => {
+            const { summary } = await fixtureWith({ rounds: classRounds(candidates), reviewRecord: 'blocking-finding' });
+            expect(summary.reviewLoopClassRecurrence?.filter((entry) => entry.stopLineCandidate).length, `${candidates} challenger(s)`).toBe(candidates);
+            const action = suggestCandidateAction('review', summary);
+            expect(action.reason, JSON.stringify(action)).toBe('review_class_recurring');
+            return action.priority!;
+        };
+        const idPriority = async (ids: number): Promise<number> => {
+            const { summary } = await fixtureWith({ rounds: idOnlyRounds(ids), reviewRecord: 'blocking-finding' });
             expect(summary.reviewLoopRecurrence?.length, `the id reading must count ${ids} ids`).toBe(ids);
-            return suggestCandidateAction('review', summary).priority!;
+            expect(summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'no stop-line class in this fixture').toBe(false);
+            const action = suggestCandidateAction('review', summary);
+            expect(action.reason, JSON.stringify(action)).toBe('review_loop_recurring');
+            return action.priority!;
         };
 
-        const oneClass = await classRoute();
-        expect(oneClass, 'one stop-line class publishes 2151').toBe(2151);
-        expect(await idRouteWith(50), '50 ids: below the boundary, the class route still wins').toBeLessThan(oneClass);
-        expect(await idRouteWith(51), '51 ids: the two numbers are equal, and the tiebreak is the taskId').toBe(oneClass);
-        expect(await idRouteWith(52), '52 ids: the id route publishes strictly more').toBeGreaterThan(oneClass);
+        for (const candidates of [1, 2]) {
+            const classRoute = await classPriority(candidates);
+            const boundary = 50 + candidates;
+            expect(await idPriority(boundary - 1), `${candidates} class(es), ${boundary - 1} ids: the class route wins`).toBeLessThan(classRoute);
+            expect(await idPriority(boundary), `${candidates} class(es), ${boundary} ids: equal, and the taskId tiebreak decides`).toBe(classRoute);
+            expect(await idPriority(boundary + 1), `${candidates} class(es), ${boundary + 1} ids: the id route wins`).toBeGreaterThan(classRoute);
+        }
     });
 
     it('AC-4: a live class reading that is not a stop-line candidate leaves the id route to speak', async () => {
@@ -476,7 +499,21 @@ describe('a recurrence report does not override the ladder', () => {
         expect(stalled.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
         expect(suggestCandidateAction('review', stalled.summary)).toMatchObject({ nextSkill: '/kata-review', reason: 'escalate_review_without_progress' });
 
-        // (3) A ledger that decided anything but `pass`: the ledger branch answers, and its destination does open.
+        // (3) A state the invariants table owns — asserted because round 4 measured that the claims' clauses are conditional
+        //     on it, and that this entry's own route is one `kata-cli build` *refuses* (authorizeReviewRepair admits only a
+        //     finding at the bar, a superseded seal or a ledger deficit), which is this change's defect one layer up. The
+        //     table is consulted before any recurrence branch, so the recurrence route must stay silent here.
+        const failedVerify = await fixtureWith({ reviewRecord: 'blocking-finding', verifyFailed: true });
+        expect(failedVerify.summary.verifyResult, 'the failed verify must be readable and current').toBe('FAIL');
+        expect(failedVerify.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
+        expect(failedVerify.summary.blockingFindings, 'and the ladder admitting a repair').toBeGreaterThan(0);
+        const verifyAction = suggestCandidateAction('review', failedVerify.summary);
+        expect(verifyAction.reason, JSON.stringify(verifyAction)).toBe('repair_failed_verify');
+        expect(verifyAction.reason).not.toBe('review_class_recurring');
+
+        // (4) A ledger that has decided anything but `pass`: this branch sits *below* the recurrence routes (measured by round 4,
+        //     which found the design doc had the order backwards), so it answers because they are silent — the ladder admits
+        //     nothing in this state — not before them.
         const failing = await fixtureWith();
         await seedFailingLedger(failing.root);
         const withLedger = await readUpstreamSummary(failing.root, taskId);
