@@ -330,6 +330,46 @@ describe('a recurrence report does not override the ladder', () => {
         expect(classAction.priority, `${classAction.priority} vs ${idAction.priority}`).toBeGreaterThan(idAction.priority!);
     });
 
+    it('AC-4: the priority boundary the claim names is measured, not just stated', async () => {
+        // **A review round found the boundary sentence off by one and then found it unasserted — so it is measured here.** The
+        // class route publishes `2150 + candidates.length` and the id route `2100 + ids`, so the crossover is `ids > 50 +
+        // candidates`: with one stop-line candidate, 52 recurring ids publish the strictly higher number, and at exactly 51 the
+        // two publish the same `2151`, where `listTaskCandidates`' tiebreak decides rather than the recurrence. A claim that
+        // names a boundary nobody measures is the shape this change exists to remove, so the three regimes are asserted: below
+        // it the class route wins, at it the numbers are equal, above it the id route wins.
+        const classRoute = async (): Promise<number> => {
+            const { summary } = await fixtureWith({
+                rounds: [
+                    { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+                    { at: '2', revisionId: 'rev-b', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
+                ],
+                reviewRecord: 'blocking-finding',
+            });
+            return suggestCandidateAction('review', summary).priority!;
+        };
+        const idRouteWith = async (ids: number): Promise<number> => {
+            // An id counts as recurring only when it appears in **two or more revisions**, so both rounds carry the same ids;
+            // one round each would leave every id with a single revision and the id route would never fire (measured: 1001,
+            // the ladder's own repair route, because the reading was empty).
+            const recurring = Array.from({ length: ids }, (_, index) => `F-${index + 1}`);
+            const findings = recurring.map((id) => ({ id, severity: 'major', class: 'contract-semantics', origin: 'original' }));
+            const rounds = [
+                { at: '1', revisionId: 'rev-a', blockingIds: recurring, blockingCount: ids, findings },
+                { at: '2', revisionId: 'rev-b', blockingIds: recurring, blockingCount: ids, findings },
+            ];
+            const { summary } = await fixtureWith({ rounds, reviewRecord: 'blocking-finding' });
+            expect(summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'the class reading must not be a stop-line candidate here').toBe(false);
+            expect(summary.reviewLoopRecurrence?.length, `the id reading must count ${ids} ids`).toBe(ids);
+            return suggestCandidateAction('review', summary).priority!;
+        };
+
+        const oneClass = await classRoute();
+        expect(oneClass, 'one stop-line class publishes 2151').toBe(2151);
+        expect(await idRouteWith(50), '50 ids: below the boundary, the class route still wins').toBeLessThan(oneClass);
+        expect(await idRouteWith(51), '51 ids: the two numbers are equal, and the tiebreak is the taskId').toBe(oneClass);
+        expect(await idRouteWith(52), '52 ids: the id route publishes strictly more').toBeGreaterThan(oneClass);
+    });
+
     it('AC-4: a live class reading that is not a stop-line candidate leaves the id route to speak', async () => {
         // **An independent review round's finding: C8's first clause needed a qualifier it omitted.** The class route fires only
         // for a *stop-line* class, so a class reading that is present but not a candidate — a judgment class, or a mechanizable
