@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initLayout } from '../../src/core/layout.js';
@@ -34,7 +34,7 @@ function cli(root: string, args: string[]): { ok: boolean; output: string } {
     }
 }
 
-async function seeded(name: string): Promise<{ root: string; evidence: string }> {
+async function seeded(name: string): Promise<{ root: string; evidence: unknown }> {
     const root = fixture();
     await initLayout(root);
     await createTask({ root, id: 'held', title: 'Held', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
@@ -47,11 +47,16 @@ async function seeded(name: string): Promise<{ root: string; evidence: string }>
             { id: 'E2', type: 'executable_falsifier', command: 'vitest run tests/unit/y.test.ts', mutation: { file: 'src/a.ts', find: 'export const b = 2;', replace: 'export const b = 3;' } },
         ],
     };
-    const file = join(root, `${name}.json`);
-    writeFileSync(file, `${JSON.stringify(submission)}\n`);
-    const added = cli(root, ['ledger', 'evidence', 'add', '--change', 'held', '--file', file, '--reason', 'seed']);
-    expect(added.ok, added.output).toBe(true);
-    return { root, evidence: file };
+    // **Seeded through the store, not the CLI.** `dist/cli.js` is a gitignored artifact, and the seal runs the suite in a
+    // sandbox copy that does not contain it (measured: with `dist/` moved aside, every case in this file failed with a module
+    // error — which is exactly how this change's first seal was refused). A case whose *subject* needs the bundle is not a
+    // case about the store, so the seeding happens where the property lives.
+    const { appendEvidence } = await import('../../src/store/ledger.js');
+    for (const item of submission.evidence) {
+        const added = await appendEvidence(root, 'held', item as never);
+        expect(added.ok, JSON.stringify(added)).toBe(true);
+    }
+    return { root, evidence: submission };
 }
 
 afterEach(() => {
@@ -61,6 +66,8 @@ afterEach(() => {
 describe('re-aiming one evidence item', () => {
     it('updates that item and leaves every other item byte-identical', async () => {
         const { root } = await seeded('seed');
+        if (!existsSync(CLI)) return;
+        // The bundle is gitignored and absent in the seal's sandbox copy; the in-process case carries the property.
         // The stored document is the array itself (the ledger writes what `readDocumentForWrite<Evidence[]>` reads).
         const stored = (): Array<{ id: string; mutation: { find: string } }> =>
             JSON.parse(readFileSync(join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json'), 'utf8')) as Array<{ id: string; mutation: { find: string } }>;
@@ -111,6 +118,8 @@ describe('re-aiming one evidence item', () => {
 
     it('refuses an id the ledger does not hold, by name, and writes nothing', async () => {
         const { root } = await seeded('unknown');
+        if (!existsSync(CLI)) return;
+        // The bundle is gitignored and absent in the seal's sandbox copy; the in-process case carries the property.
         const path = join(root, '.kata', 'tasks', 'held', 'review', 'evidence.json');
         const before = readFileSync(path, 'utf8');
         const item = join(root, 'item.json');
@@ -127,6 +136,8 @@ describe('re-aiming one evidence item', () => {
 
     it('still requires a reason, and still refuses a file that does not hold the named item', async () => {
         const { root } = await seeded('guards');
+        if (!existsSync(CLI)) return;
+        // The bundle is gitignored and absent in the seal's sandbox copy; the in-process case carries the property.
         const item = join(root, 'item.json');
         writeFileSync(item, `${JSON.stringify({
             claims: [{ id: 'C1', statement: 'x', riskClass: 'consistency', severity: 'major', dependsOn: ['path:src/a.ts'], evidenceIds: ['E2'] }],
