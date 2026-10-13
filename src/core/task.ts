@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appendStateEvent, writeCurrentState, type Phase, type StateRecord } from './state.js';
@@ -156,6 +156,31 @@ export interface TaskRecord {
   acceptanceMatrixMigration?: AcceptanceMatrixMigrationNote;
 }
 
+
+/** The classification decision attached to a task and carried unchanged into its review request. */
+export interface TaskClassificationRecord {
+  version: 1;
+  taskId: string;
+  by: 'agent' | 'floor';
+  tier: string;
+  floor: string;
+  reasons: string[];
+  riskClasses: string[];
+  facts: {
+    declaredPaths: string[];
+    matched: Array<{ pattern: string; path: string; floor: string }>;
+    wideChange: boolean;
+  };
+  lane: string;
+  laneTier: string;
+  laneBelow: boolean;
+}
+
+export type TaskClassificationRead =
+  | { kind: 'absent' }
+  | { kind: 'usable'; record: TaskClassificationRecord }
+  | { kind: 'unreadable'; reason: string };
+
 export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
   const root = input.root ?? process.cwd();
   const now = new Date().toISOString();
@@ -271,3 +296,58 @@ export class UnreadableTaskRecord extends Error {
 // inside `withTaskLock` (`stampEngineUnlocked`, called as a task advances), and this copy stamped `task.engine` without the
 // lock — one fact, two derivations, and the unused one could have raced the used one. The wiring check reported it as having
 // no consumer but the test written for it, which is the same finding in its own vocabulary.
+
+
+function classificationRecord(value: unknown, taskId: string): TaskClassificationRecord | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Partial<TaskClassificationRecord>;
+  const facts = record.facts;
+  if (record.version !== 1 || record.taskId !== taskId || (record.by !== 'agent' && record.by !== 'floor')) return null;
+  if (typeof record.tier !== 'string' || typeof record.floor !== 'string' || typeof record.lane !== 'string' || typeof record.laneTier !== 'string') return null;
+  if (!Array.isArray(record.reasons) || !record.reasons.every((item) => typeof item === 'string')) return null;
+  if (!Array.isArray(record.riskClasses) || !record.riskClasses.every((item) => typeof item === 'string')) return null;
+  if (typeof record.laneBelow !== 'boolean' || typeof facts !== 'object' || facts === null) return null;
+  if (!Array.isArray(facts.declaredPaths) || !facts.declaredPaths.every((item) => typeof item === 'string')) return null;
+  if (typeof facts.wideChange !== 'boolean' || !Array.isArray(facts.matched)) return null;
+  if (!facts.matched.every((item) => typeof item === 'object' && item !== null
+    && typeof item.pattern === 'string' && typeof item.path === 'string' && typeof item.floor === 'string')) return null;
+  return record as TaskClassificationRecord;
+}
+
+/** Read the task-attached classification as absent / usable / unreadable; never invent a tier when its record is damaged. */
+export async function readTaskClassification(root: string, taskId: string): Promise<TaskClassificationRead> {
+  const path = join(taskDir(root, taskId), 'classification.json');
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'ENOENT') return { kind: 'absent' };
+    return { kind: 'unreadable', reason: error instanceof Error ? error.message : String(error) };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return { kind: 'unreadable', reason: error instanceof Error ? error.message : String(error) };
+  }
+  const record = classificationRecord(parsed, taskId);
+  return record ? { kind: 'usable', record } : { kind: 'unreadable', reason: 'classification record does not match its schema or task id' };
+}
+
+/** Persist a classification once. Re-running open must not silently replace the judgement already attached to a task. */
+export async function writeTaskClassification(root: string, taskId: string, value: TaskClassificationRecord): Promise<void> {
+  assertValidTaskId(taskId);
+  const record = classificationRecord(value, taskId);
+  if (!record) throw new Error(`classification record for '${taskId}' does not match its schema`);
+  const path = join(taskDir(root, taskId), 'classification.json');
+  await mutateTaskArtefact(root, taskId, path, async (current) => {
+    if (current.length > 0) {
+      const existing = classificationRecord(JSON.parse(current), taskId);
+      if (!existing || JSON.stringify(existing) !== JSON.stringify(record)) {
+        throw new Error(`classification record for '${taskId}' already exists and differs; refusing to replace it`);
+      }
+      return current;
+    }
+    return `${JSON.stringify(record, null, 2)}\n`;
+  });
+}

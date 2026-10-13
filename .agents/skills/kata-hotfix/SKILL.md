@@ -163,13 +163,15 @@ Before running `kata-cli hotfix`, resolve these three choices in the agent conve
 2. Development mode:
    - `tdd` — write focused failing tests first, then implement.
    - `standard` — implement directly with proportional tests.
-3. Review mode — **the lane is a floor, not a preference.** The repository derives a classification from the paths
-   the change touches (`riskFloors`: a path pattern raises the floor, and the floor names the tier) and reports it as
-   `risk` in `kata-cli ledger plan` (`tier`, `floor`, `matched`, `riskClasses`). Choose the lane at or above that
-   classification; a lane above it is fine — say why in one sentence, because that sentence is the record of the decision.
-   Do not open a change below its own classification: the floor exists so a change cannot be talked into a lighter lane,
-   and a change that reaches a gate's meaning, an identity, a schema or an enforced invariant is at least `strict`
-   whatever its size.
+3. Review mode and classification — the lane is a floor, not a preference. **The agent judges; the mechanism contributes facts and a fail-closed path floor.** Before opening the task, read the diff and intended owned paths and answer:
+   1. Does this change a gate's pass/refuse condition?
+   2. Does it change identity, identity derivation, or a digest?
+   3. Does it change a schema or how an enforced invariant is enforced?
+   4. Does it change a trust boundary (who may write, what counts as independent)?
+   5. Does it change an externally observable contract?
+   6. Can the evidence be decided mechanically, or does it require a human judgement (intent, semantics, boundary)?
+   7. Is this another instance of an existing defect class, or a new one?
+   Any yes to 1–5 means at least strict; give reasons, the tier (standard / strict / security) and riskClasses (the kernel vocabulary). Write the judgement as JSON and pass it with --classification-file <path> to kata-cli hotfix. Do not read kata-cli ledger plan before open: the task has no path declaration yet, so that command refuses. After open, classification.json records the agent judgement and the CLI-derived facts from the paths the change touches; kata-cli ledger plan exposes the `risk` object, including tier, floor, matched and riskClasses. The CLI derives floors and breadth from declared paths, raises an agent tier below the path floor (by: floor) and names the raise; without an agent judgement it records the path floor fail-closed, not an invented semantic decision. The lane may not be below the classification (effective classification): do not open a change below its own classification; choose a lane at or above it. A higher lane is fine; say why in one sentence. A change that reaches a gate's meaning, identity, schema or an enforced invariant is at least strict, whatever its size. If design reveals a higher classification than the lane, do not claim the lane can be raised in place: open a successor change at the required lane and relate it with merged_into.
    - `std` — standard independent review; the lane for a change that reaches none of those floors.
    - `strict` — stricter architecture/regression review.
    - `security` — security-focused review.

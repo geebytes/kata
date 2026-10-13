@@ -245,6 +245,8 @@ flowchart TB
 | Dev mode | `tdd` / `standard` | TDD requires failing tests first |
 | Review mode | `std` / `strict` / `security` | strict mode enforces fixing all major findings |
 
+
+The host agent classifies the intended change at open from its diff and declared paths; it does not read `kata-cli ledger plan` before opening because that command refuses when no task paths exist. Supply the judgement with `--classification-file <path>` as JSON containing `tier`, non-empty `reasons`, and kernel `riskClasses`. The CLI independently derives path floors, raises a lower judgement fail-closed, records `classification.json`, and carries it into the ReviewRequest. If design reveals that the recorded tier is above the lane, the lane is fixed at open: open a successor at the required lane and relate it with `kata-cli tasks relate --from <old-task> --to <successor-task> --type merged_into --reason \"classification requires a stronger lane\"`.
 ## Acceptance matrix
 
 Tasks may include an `acceptanceMatrix` that maps each acceptance criterion to concrete implementation paths, test paths, and evidence check commands. With `strictClosure` enabled, `--seal` validates that owned paths cover all declared matrix paths and runs the corresponding checks to collect evidence.

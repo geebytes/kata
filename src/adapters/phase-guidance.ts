@@ -107,29 +107,26 @@ Fix reported issues: broken wikilinks, orphaned pages, missing frontmatter. Re-r
 - Before starting a new task, run \`kata-cli wiki orient\` to refresh context.`;
 
         case 'kata-design':
-            return `## The lane was chosen at the entry point, and it is a floor
-The review mode is decided where the change is opened (\`/kata-open\`), and it may not be below the classification the
-repository derives from the paths the change touches — \`plan.risk\` in \`kata-cli ledger plan\` carries \`tier\`, \`floor\`
-and \`matched\`. Design is where that classification first becomes readable, so if the plan's tier is higher than the lane
-the change was opened with, say so before going on rather than quietly planning against the weaker one; raising the lane is
-always allowed and needs one sentence of reason.
+            return `## Classification and lane
+The host agent's semantic classification is recorded at open in .kata/tasks/<id>/classification.json. The CLI independently derives matched floors and breadth from the task's declared paths. At this stage compare the recorded tier with plan.risk from kata-cli ledger plan; do not treat ledger plan as an input available before open, because the task has no declaration then and the command refuses.
+
+The review mode was fixed when this change was opened; the lane may not be below the classification. If the recorded classification is higher than the lane, do not claim the lane can be raised in place. Open a successor change at the required lane and relate it with kata-cli tasks relate --from <old-task> --to <successor-task> --type merged_into --reason "classification requires a stronger lane".
 
 ## Knowledge capture during design
 
 Design decisions often establish lasting constraints and norms. Capture them as you go:
 
 1. After accepting or rejecting an approach, run:
-   \`\`\`bash
+   Example command:
    kata-cli wiki ingest --from docs/decisions/<decision-log>.md
-   \`\`\`
-   This creates a \`candidate\` wiki record linking the decision to source evidence.
+   This creates a candidate wiki record linking the decision to source evidence.
 
 2. If you identify new rules, conventions, or architectural constraints, write a brief summary page and ingest it:
-   \`\`\`bash
+   Example command:
    kata-cli wiki ingest --from .llmwiki/concepts/<topic>.md
-   \`\`\`
 
 3. These candidates are available to future tasks once promoted. The earlier you capture, the less context later agents will miss.`;
+
 
         case 'kata-build':
             return `## Repairs, and growing the audited surface
@@ -475,13 +472,15 @@ Before running \`kata-cli ${command.phase}\`, resolve these three choices in the
 2. Development mode:
    - \`tdd\` — write focused failing tests first, then implement.
    - \`standard\` — implement directly with proportional tests.
-3. Review mode — **the lane is a floor, not a preference.** The repository derives a classification from the paths
-   the change touches (\`riskFloors\`: a path pattern raises the floor, and the floor names the tier) and reports it as
-   \`risk\` in \`kata-cli ledger plan\` (\`tier\`, \`floor\`, \`matched\`, \`riskClasses\`). Choose the lane at or above that
-   classification; a lane above it is fine — say why in one sentence, because that sentence is the record of the decision.
-   Do not open a change below its own classification: the floor exists so a change cannot be talked into a lighter lane,
-   and a change that reaches a gate's meaning, an identity, a schema or an enforced invariant is at least \`strict\`
-   whatever its size.
+3. Review mode and classification — the lane is a floor, not a preference. **The agent judges; the mechanism contributes facts and a fail-closed path floor.** Before opening the task, read the diff and intended owned paths and answer:
+   1. Does this change a gate's pass/refuse condition?
+   2. Does it change identity, identity derivation, or a digest?
+   3. Does it change a schema or how an enforced invariant is enforced?
+   4. Does it change a trust boundary (who may write, what counts as independent)?
+   5. Does it change an externally observable contract?
+   6. Can the evidence be decided mechanically, or does it require a human judgement (intent, semantics, boundary)?
+   7. Is this another instance of an existing defect class, or a new one?
+   Any yes to 1–5 means at least strict; give reasons, the tier (standard / strict / security) and riskClasses (the kernel vocabulary). Write the judgement as JSON and pass it with --classification-file <path> to kata-cli ${command.phase}. Do not read kata-cli ledger plan before open: the task has no path declaration yet, so that command refuses. After open, classification.json records the agent judgement and the CLI-derived facts from the paths the change touches; kata-cli ledger plan exposes the \`risk\` object, including tier, floor, matched and riskClasses. The CLI derives floors and breadth from declared paths, raises an agent tier below the path floor (by: floor) and names the raise; without an agent judgement it records the path floor fail-closed, not an invented semantic decision. The lane may not be below the classification (effective classification): do not open a change below its own classification; choose a lane at or above it. A higher lane is fine; say why in one sentence. A change that reaches a gate's meaning, identity, schema or an enforced invariant is at least strict, whatever its size. If design reveals a higher classification than the lane, do not claim the lane can be raised in place: open a successor change at the required lane and relate it with merged_into.
    - \`std\` — standard independent review; the lane for a change that reaches none of those floors.
    - \`strict\` — stricter architecture/regression review.
    - \`security\` — security-focused review.

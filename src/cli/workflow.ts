@@ -1,4 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../core/config.js';
@@ -41,7 +42,9 @@ import { activateHookTask } from '../hooks/runtime.js';
 import { createPacketHash } from './tasks.js';
 import { type KataCommand } from '../workflow/orchestrator.js';
 import { validateMatrix, validateWaivers, type Waiver } from '../quality/acceptance-matrix.js';
-import type { AcceptanceMatrix, ClaimDeclaration, UpstreamCoverage } from '../core/task.js';
+import { classifyLaneAndDeclaration, laneBelowSentence, parseAgentClassification, taskClassificationRecord } from '../quality/classification.js';
+import { defaultPolicy } from '../kernel/policy.js';
+import { writeTaskClassification, type AcceptanceMatrix, type ClaimDeclaration, type UpstreamCoverage } from '../core/task.js';
 import { type Role as HandoffRole } from '../workflow/handoff.js';
 import { argValue, flagPresent, paradeArgValue, parseChangeArg, readFlag, switchPresent } from './invocation.js';
 export { flagPresent } from './invocation.js';
@@ -106,6 +109,10 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     // refused it ("Strict closure requires an acceptanceMatrix") — with the criteria frozen at creation, the only
     // remaining route was to delete the task and reopen it.
     const bootstrap = requiresWorkflowProfile(command) ? await readBootstrapFile(argv.slice(1)) : undefined;
+    // The host agent's judgement is supplied as structured data; the mechanism derives paths/floors itself and will fail closed if the judgement sits below them.
+    const agentClassification = (command === 'open' || command === 'hotfix' || command === 'tweak')
+        ? await readClassificationFile(argv.slice(1))
+        : undefined;
     const result = await runCommand(commandToRun, change, root, {
         // **`--title` is documented on `open`, `hotfix` and `tweak`, and nothing read it.** A documented flag that is
         // silently dropped is the shape this repository removes most often; the flag is honoured rather than deleted from
@@ -168,6 +175,48 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         ? boundaryCreatedBy(result.phase, command, switchPresent(argv, '--approve'))
         : null;
     if (nextBoundary) await createUserChoiceGate({ root, taskId: result.taskId, boundary: nextBoundary });
+    // **The lane and the classification, side by side, at the moment the lane is chosen.** The lane is fixed when a change is
+    // opened, and the classification is readable from the paths the same command just declared — so this is the only place the
+    // two facts are both in hand *and* still changeable. The comparison names itself (`laneBelowSentence`) and refuses
+    // nothing: naming is the property, and a gate's strength is a separate decision.
+    let classificationDiagnostics: Record<string, unknown> | undefined;
+    if (result.success && (command === 'open' || command === 'hotfix' || command === 'tweak')) {
+        try {
+            const record = JSON.parse(await readFile(join(root, '.kata', 'tasks', result.taskId, 'task.json'), 'utf8')) as {
+                ownedPaths?: string[];
+                workflowProfile?: { reviewMode?: string };
+            };
+            const answer = classifyLaneAndDeclaration({
+                paths: record.ownedPaths ?? [],
+                policy: defaultPolicy(),
+                ...(record.workflowProfile?.reviewMode === undefined ? {} : { reviewMode: record.workflowProfile.reviewMode }),
+                ...(agentClassification ? { agentClassification } : {}),
+            });
+            const classification = taskClassificationRecord({ taskId: result.taskId, paths: record.ownedPaths ?? [], answer });
+            await writeTaskClassification(root, result.taskId, classification);
+            classificationDiagnostics = {
+                classification: {
+                    tier: answer.classification.tier,
+                    floor: answer.classification.floor,
+                    matched: answer.classification.matched,
+                    riskClasses: answer.classification.riskClasses,
+                    wideChange: answer.classification.wideChange,
+                    reason: answer.classification.reason,
+                },
+                classificationRecord: classification,
+                lane: answer.lane,
+                laneTier: answer.laneTier,
+                laneBelow: answer.laneBelow,
+                ...(answer.laneBelow
+                    ? { laneBelowNote: laneBelowSentence({ changeId: result.taskId, lane: answer.lane, laneTier: answer.laneTier, classification: answer.classification }) }
+                    : {}),
+            };
+        } catch (error) {
+            // **A lane report that cannot be computed is reported, not omitted.** The declaration here would be "the two facts
+            // were never compared", which is the state this exists to remove.
+            classificationDiagnostics = { classificationUnreadable: (error as Error).message };
+        }
+    }
     if (result.success && workflowProfile?.isolationMode === 'git_flow') {
         // Projected, not stored as inspected: `inspectGitFlow` returns a plan on all six of its returns, and persisting one
         // is what made every git_flow task invalid on the next read (`kata-cli design` refusing a record kata wrote).
@@ -291,7 +340,9 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
                 },
             }
             : {}),
-        ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+        ...(result.diagnostics || classificationDiagnostics
+            ? { diagnostics: { ...(result.diagnostics ?? {}), ...(classificationDiagnostics ?? {}) } }
+            : {}),
         ...(result.error ? { error: result.error } : {}),
     };
 }
@@ -649,6 +700,21 @@ export async function readRequirementsFile(argv: string[]): Promise<Array<{ id?:
             ...(typeof item.source === 'string' ? { source: item.source } : {}),
         };
     });
+}
+
+
+/** Read the host agent's judgement before opening a task; invalid input must not leave a half-created task behind. */
+export async function readClassificationFile(argv: string[]): Promise<ReturnType<typeof parseAgentClassification> | undefined> {
+    if (!flagPresent(argv, '--classification-file')) return undefined;
+    const path = argValue(argv, '--classification-file');
+    if (!path) throw new Error('Invalid classification file: --classification-file requires a path.');
+    try {
+        const parsed: unknown = JSON.parse(await readFile(resolve(path), 'utf8'));
+        return parseAgentClassification(parsed);
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Invalid classification file: ${detail}`);
+    }
 }
 
 /**

@@ -149,26 +149,22 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
-## The lane was chosen at the entry point, and it is a floor
-The review mode is decided where the change is opened (`/kata-open`), and it may not be below the classification the
-repository derives from the paths the change touches — `plan.risk` in `kata-cli ledger plan` carries `tier`, `floor`
-and `matched`. Design is where that classification first becomes readable, so if the plan's tier is higher than the lane
-the change was opened with, say so before going on rather than quietly planning against the weaker one; raising the lane is
-always allowed and needs one sentence of reason.
+## Classification and lane
+The host agent's semantic classification is recorded at open in .kata/tasks/<id>/classification.json. The CLI independently derives matched floors and breadth from the task's declared paths. At this stage compare the recorded tier with plan.risk from kata-cli ledger plan; do not treat ledger plan as an input available before open, because the task has no declaration then and the command refuses.
+
+The review mode was fixed when this change was opened; the lane may not be below the classification. If the recorded classification is higher than the lane, do not claim the lane can be raised in place. Open a successor change at the required lane and relate it with kata-cli tasks relate --from <old-task> --to <successor-task> --type merged_into --reason "classification requires a stronger lane".
 
 ## Knowledge capture during design
 
 Design decisions often establish lasting constraints and norms. Capture them as you go:
 
 1. After accepting or rejecting an approach, run:
-   ```bash
+   Example command:
    kata-cli wiki ingest --from docs/decisions/<decision-log>.md
-   ```
-   This creates a `candidate` wiki record linking the decision to source evidence.
+   This creates a candidate wiki record linking the decision to source evidence.
 
 2. If you identify new rules, conventions, or architectural constraints, write a brief summary page and ingest it:
-   ```bash
+   Example command:
    kata-cli wiki ingest --from .llmwiki/concepts/<topic>.md
-   ```
 
 3. These candidates are available to future tasks once promoted. The earlier you capture, the less context later agents will miss.

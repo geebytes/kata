@@ -13,7 +13,7 @@ export const USAGE: Record<string, string> = {
     comet: 'kata-cli comet <init|status|handoff> [--platform <name>]',
     codegraph: 'kata-cli codegraph <status|sync|index|explore|impact|affected> [--root <path>]',
     status: 'kata-cli status [--change <task-id>] [--with-context] [--json]',
-    open: 'kata-cli open --change <task-id> --isolation <mode> --development <mode> --review <mode> [--bootstrap-file <path>] [--title <text>]',
+    open: 'kata-cli open --change <task-id> --isolation <mode> --development <mode> --review <mode> [--bootstrap-file <path>] [--classification-file <path>] [--title <text>]',
     design: 'kata-cli design --change <task-id>',
     build: 'kata-cli build --change <task-id> [--seal] [--judgement <text>]',
     verify: 'kata-cli verify --change <task-id>',

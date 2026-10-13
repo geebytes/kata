@@ -55,13 +55,13 @@ async function fixture(taskId: string): Promise<string> {
     return root;
 }
 
-async function declareFalsifier(root: string, taskId: string, find: string): Promise<void> {
+async function declareFalsifier(root: string, taskId: string, find: string, mutationFile = 'src/thing.ts'): Promise<void> {
     const directory = await mkdtemp(join(tmpdir(), 'kata-roads-submission-'));
     roots.push(directory);
     const file = join(directory, 'submission.json');
     await writeFile(file, `${JSON.stringify({
         claims: [],
-        evidence: [{ id: 'E1', type: 'executable_falsifier', command: 'npx vitest run tests/unit/example.test.ts', mutation: { file: 'src/thing.ts', find, replace: 'export const thing = 42;' } }],
+        evidence: [{ id: 'E1', type: 'executable_falsifier', command: 'npx vitest run tests/unit/example.test.ts', mutation: { file: mutationFile, find, replace: 'export const thing = 42;' } }],
     }, null, 2)}\n`, 'utf8');
     const added = await ledgerReply(root, taskId, ['evidence', 'add', '--file', file, '--reason', 'declare the instrument']);
     expect(String(added), 'the fixture must declare an instrument for the refusal to be about').toContain('"ok":true');
@@ -144,6 +144,24 @@ describe('every refusal this change adds names a command that works there', () =
         expect(sealed.success).toBe(false);
         const commands = printedCommands(String(sealed.error));
         expect(commands.length, 'this refusal must name a road as well').toBeGreaterThan(0);
+        for (const command of commands) {
+            expect(command).not.toMatch(/--change </);
+            expect(await drivePrinted(root, taskId, command), `printed road: ${command}`).not.toMatch(USAGE_REFUSAL);
+        }
+    });
+
+
+    it.each([
+        { taskId: 'road-anchor-ambiguous', mutationFile: 'src/thing.ts', find: '= 1;', fileText: 'export const one = 1;\nexport const two = 1;\n' },
+        { taskId: 'road-anchor-missing-file', mutationFile: 'src/gone.ts', find: 'export const gone = 1;', fileText: null },
+    ])('the $taskId refusal names a road the CLI accepts', async ({ taskId, mutationFile, find, fileText }) => {
+        const root = await fixture(taskId);
+        if (fileText !== null) await writeFile(join(root, mutationFile), fileText, 'utf8');
+        await declareFalsifier(root, taskId, find, mutationFile);
+        const sealed = await seal(root, taskId);
+        expect(sealed.success).toBe(false);
+        const commands = printedCommands(String(sealed.error));
+        expect(commands.length, 'the anchor refusal must name a road').toBeGreaterThan(0);
         for (const command of commands) {
             expect(command).not.toMatch(/--change </);
             expect(await drivePrinted(root, taskId, command), `printed road: ${command}`).not.toMatch(USAGE_REFUSAL);

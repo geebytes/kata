@@ -22,7 +22,10 @@
  * request speaks for the ledger, and `ledger claim add` is the remedy, not a gap here), and probe answers are **not** checked —
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
+import { readTaskClassification, type TaskClassificationRecord } from '../core/task.js';
 import { readLoopReplay, type LoopReplay } from '../quality/loop-replay.js';
 import { planDigestOf, questionForComparison, declaredPaths, declaredSubjectRevision, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
@@ -30,6 +33,9 @@ import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
 import { ledgerTierForDeclaredPaths, tierOverrideFromPlan } from './verdict.js';
 import type { EvidenceType } from '../kernel/types.js';
+import { readTaskRelations } from '../core/relations.js';
+import { readTask } from '../core/task.js';
+import { buildReviewPackage, type ReviewPackage } from '../quality/review-package.js';
 
 export type ClaimRequest = {
     claimId: string;
@@ -78,7 +84,18 @@ export type ReviewRequest = {
     missingGenerators?: string[];
     unreadableArtefacts?: string[];
     loopReplay?: LoopReplay;
+    /**
+     * **The judgement the round is reviewing alongside the change.** What the declaration classifies as, the lane the profile
+     * names, and whether the lane sits below the classification — carried so a reviewer can review *that judgement* rather than
+     * only its consequences. `tier`/`floor`/`matched` are the kernel's own classification; `lane`/`laneTier` come from
+     * `reviewTierFor`; nothing here is a second opinion.
+     */
+    classification?: ClassificationOnRequest;
+    /** Facts delivered as a single machine-readable handoff so the reviewer does not re-derive relations, axes, declarations or falsifier coverage. */
+    reviewPackage: ReviewPackage;
 };
+
+export type ClassificationOnRequest = TaskClassificationRecord | { unreadable: string };
 
 export type RequestGap = { claimId: string | null; what: string };
 
@@ -123,6 +140,10 @@ export async function buildReviewRequest(input: {
     // "this loop is recycling its own repairs" from "this class keeps turning up in the original code".
     // The same decision the summary asks, so the two cannot disagree about an absent history (R6-F5).
     const loopReplay = await readLoopReplay(input.root, input.changeId);
+    // **The classification the round reviews, read from the change's own record.** A request that omitted it would ask a
+    // reviewer to judge a lane they cannot see; one that reported a classification it was handed would report the caller's
+    // belief. So it is read here, and an unreadable record is carried as a named hole rather than as an absence.
+    const classificationOnRequest = await classificationForRequest(input.root, input.changeId);
     const declaredClasses = declaredDefectClasses(stored);
     const declaredForInstruments = await declaredPaths(input.root, input.changeId);
     const planOverride = tierOverrideFromPlan(stored, ledger.policy);
@@ -249,6 +270,19 @@ export async function buildReviewRequest(input: {
         ...ledger.malformedFiles,
     ])];
 
+    const taskRecord = await readTask(input.root, input.changeId);
+    const taskRelations = await readTaskRelations(input.root, input.changeId);
+    const reviewPackage = buildReviewPackage({
+        task: taskRecord,
+        relations: taskRelations.relations,
+        policy: ledger.policy,
+        achievedAssurance: ledger.assurance,
+        tier: plan.tier ?? 'unknown',
+        requirements: plan.requiredEvidence ?? [],
+        classification: classificationOnRequest,
+        claims: ledger.claims,
+        evidence: ledger.evidence,
+    });
     return {
         ok: true,
         request: {
@@ -261,6 +295,8 @@ export async function buildReviewRequest(input: {
             // The loop's record for this change, so the round can tell "we are fixing our own fixes" from "this class keeps
             // appearing in the original code" — the reading AC-6 exists to publish, handed to its real consumer.
             ...(loopReplay === null ? {} : { loopReplay }),
+            classification: classificationOnRequest,
+            reviewPackage,
             deadlineToolCalls: plan.discovery?.deadlineToolCalls ?? null,
             // Present only when something could not be read: an absent field means the brief describes a ledger that was
             // fully readable, and a name here means the reviewer is looking at a request built around a hole.
@@ -344,4 +380,21 @@ export async function verifyAgainstRequest(input: {
         }
     }
     return { gaps };
+}
+
+/**
+ * The classification and the lane, read from the change's record with the ledger's policy.
+ *
+ * The record is the source: `ownedPaths` is what the change declared and `workflowProfile.reviewMode` is the lane it was
+ * opened with. An unreadable record comes back as a **named hole** — "the reviewer could not be told which lane this change
+ * runs under" is a fact about the brief, while reporting `standard` there would be inventing one.
+ */
+/** Read the classification snapshot attached to this change; never recompute or silently substitute a new judgement. */
+async function classificationForRequest(root: string, changeId: string): Promise<ClassificationOnRequest> {
+    const result = await readTaskClassification(root, changeId);
+    if (result.kind === 'usable') return result.record;
+    if (result.kind === 'absent') {
+        return { unreadable: `classification.json is absent for task '${changeId}'; the reviewer cannot inspect the classification that was recorded when the lane was chosen` };
+    }
+    return { unreadable: `classification.json for task '${changeId}' is unreadable: ${result.reason}` };
 }

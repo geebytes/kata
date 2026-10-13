@@ -253,6 +253,8 @@ flowchart TB
 | 开发模式 | `tdd` / `standard` | TDD 要求先写失败测试 |
 | 审查模式 | `std` / `strict` / `security` | strict 模式强制修复所有 major findings |
 
+
+Agent 在 open 阶段根据 diff 与拟声明路径做语义分类；此时不能先读 `kata-cli ledger plan`，因为尚无 task 路径声明，该命令会拒绝。通过 `--classification-file <path>` 提交 JSON（`tier`、非空 `reasons`、内核 `riskClasses`）。CLI 独立根据声明路径派生 floor；agent 分类低于 floor 时 fail-closed 升级，并记录 `classification.json`、随 ReviewRequest 交给复核者。设计阶段发现分类高于 review mode 时，lane 已在 open 固定，不能原地升档；应以所需 lane 开后继 change，并执行 `kata-cli tasks relate --from <old-task> --to <successor-task> --type merged_into --reason \"classification requires a stronger lane\"` 建立关系。
 ## Acceptance Matrix
 
 Task 可以包含一个 `acceptanceMatrix`，将每条验收标准映射到具体的实现路径、测试路径和 evidence 检查命令。启用 `strictClosure` 后，`--seal` 会验证 owned paths 覆盖矩阵中声明的所有路径，并运行对应的检查命令来收集 evidence。

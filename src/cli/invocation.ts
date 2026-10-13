@@ -103,7 +103,7 @@ export function inlineValue(argv: string[], flag: string): string | undefined {
  */
 export const VALUE_FLAGS: readonly string[] = [
     '--add', '--c0', '--actor', '--adapter', '--assurance', '--base', '--bootstrap-file', '--boundary', '--branch', '--by',
-    '--candidate', '--change', '--classes', '--choice', '--claim', '--command', '--covers', '--decision', '--depends-on',
+    '--candidate', '--change', '--classes', '--choice', '--claim', '--classification-file', '--command', '--covers', '--decision', '--depends-on',
     '--development', '--development-mode', '--diversity', '--endpoint', '--evidence', '--excludes', '--failure-count',
     '--failures', '--fails-on', '--falsifier', '--field', '--file', '--findings-carried-to', '--for-task', '--from', '--home', '--id',
     '--instrument', '--isolation', '--isolation-mode', '--judgement', '--kind', '--language', '--mode', '--observed',
