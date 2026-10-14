@@ -26,6 +26,32 @@ describe('an argument that references the repository is rewritten', () => {
         expect(execution?.args).toEqual([sandboxRoot, `${sandboxRoot}/`, `${sandboxRoot}/tests/support`]);
     });
 
+    it('normalizes a trailing slash on the author root before rewriting declaration values', () => {
+        const execution = checksForExecutionSandbox([
+            { kind: 'test', command: `${authorRoot}/.venv/bin/ruff`, args: [authorRoot, `${authorRoot}/tests/support`], cwd: authorRoot },
+        ], `${authorRoot}/`, sandboxRoot)[0].execution;
+
+        expect(execution?.command).toBe(`${sandboxRoot}/.venv/bin/ruff`);
+        expect(execution?.args).toEqual([sandboxRoot, `${sandboxRoot}/tests/support`]);
+    });
+
+    it('does not mistake a doubled separator before the root for a repository reference', () => {
+        const value = `/x/${authorRoot}/y`;
+        const execution = checksForExecutionSandbox([
+            { kind: 'test', command: 'node', args: [value], cwd: authorRoot },
+        ], authorRoot, sandboxRoot)[0].execution;
+
+        expect(execution?.args).toEqual([value]);
+    });
+
+    it('rewrites a valid reference without leaving it at the author tree because another occurrence is longer', () => {
+        const execution = checksForExecutionSandbox([
+            { kind: 'test', command: 'node', args: [`${authorRoot}/ok:${authorRoot}backup`], cwd: authorRoot },
+        ], authorRoot, sandboxRoot)[0].execution;
+
+        expect(execution?.args).toEqual([`${sandboxRoot}/ok:${authorRoot}backup`]);
+    });
+
     it('maps an occurrence embedded in a longer value when it is a path segment', () => {
         const script = `require('fs').writeFileSync('${authorRoot}/second-started','yes')`;
         const execution = checksForExecutionSandbox([

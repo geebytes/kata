@@ -52,9 +52,9 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 > 内嵌段。
 
 实现要点（防止"改完又长出一套新规则"）：
-- 与 `mapRepositoryPath` 的判定**同源**：同一个「值是否就在仓库内」的谓词，路径版与字符串版各用一次；
+- 与 `mapRepositoryPath` 共享**规范化的作者根**，但不伪称二者是同一个 predicate：路径版解析整个 `cwd`，字符串版识别可嵌入的路径段；
 - 处理尾斜杠（`/app/` 与值以 `/` 结尾）不产生 `//`；
-- **两个谓词，各管各的形态**（复核第 3 轮实测更正）：`command` / `args` / `env` 是**字符串**，走 `rewriteAuthorReference`（可内嵌、按段判定、全有或全无）；`cwd` 是**一个路径**，走 `mapRepositoryPath`（整值判定，并把相对值按作者根解析）。两者在一个值上可以有不同答案（`tests/application` 作为 cwd 会被解析进快照，作为参数则原样），这是刻意的：cwd 必须是快照内一个真实目录，而参数里的长名不是仓库引用。
+- **两个谓词，各管各的形态**（复核第 3 轮实测更正）：`command` / `args` / `env` 是**字符串**，走 `rewriteAuthorReference`（可内嵌、每次出现独立按段判定）；`cwd` 是**一个路径**，走 `mapRepositoryPath`（整值判定，并把相对值按作者根解析）。两者在一个值上可以有不同答案（`tests/application` 作为 cwd 会被解析进快照，作为参数则原样），这是刻意的：cwd 必须是快照内一个真实目录，而参数里的长名不是仓库引用。
 - 该解析只有**一个**调用者（`src/workflow/orchestrator.ts` 的封存路径），所以本节早先写的「`build --seal` 与 `verify` 共用这条解析」不成立 —— `verify` 读的是既有证据，不执行新的沙箱命令。
 
 ## 3. 验收项（各配独立选择器文件）
@@ -68,11 +68,12 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 **单点变异**（每条先确认落上再采信读数）：
 1. 还原成 `replaceAll` ⇒ AC-1 红；
 2. 改成"从不替换" ⇒ AC-2 红；
-3. 只在 `command` 上修、`args` 仍用旧规则 ⇒ AC-1 红（args 才是本次现象）。
+3. 删除根规范化、把 `//<root>` 当作引用，或让一个长名字阻止同值中的真实根映射 ⇒ 对应选择器红；
+4. 只在 `command` 上修、`args` 仍用旧规则 ⇒ AC-1 红（args 才是本次现象）。
 
 ## 4. 边界（写清楚，不假装全覆盖）
 
-- **出现之后还跟着字符**的（`tests/application`、`packages/x/src/x/application`）**不被替换**：`application` 不是 `app`。这是本 change 的刻意选择（修法与边界以实现为准，见 §2 的更正）。"是**响亮**的失败（日志里会显示原始绝对路径，且沙箱里该路径不存在 ⇒ 判据失败并留下证据），比"猜着换"好。
+- **出现之后还跟着字符**的（`tests/application`、`packages/x/src/x/application`）**不被替换**：`application` 不是 `app`；根前紧接 `/` 的（`//<root>`）也不被替换，因为它位于另一个路径内。反之，同一个值里的真实根引用仍逐次映射，不能因为一个长名字出现就把作者路径漏给沙箱。未映射的绝对值可能仍在作者文件系统上存在，因此不再把「必然响亮失败」当作安全论据。
 - 报告 §6 的 gitignore 素材缺失**不在本 change 范围**（另记队列，并在文档里写一句）。
 - 本 change 不动沙箱的其它部分（内容同步、依赖符号链接、身份计算）。
 

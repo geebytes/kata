@@ -63,7 +63,7 @@ function isArgumentRefusal(text: string): boolean {
 async function drivePrintedAny(root: string, changeId: string, command: string): Promise<string> {
     const argv = argvOf(command);
     if (argv[0] === 'ledger') return ledgerReply(root, changeId, argv.slice(1), true);
-    if (argv[0] === 'scope') return scopeReply(root, changeId, argv.slice(1));
+    if (argv[0] === 'scope') return scopeReply(root, argv.slice(1));
     throw new Error(`this guard drives the ledger and scope families; it does not know how to run: ${command}`);
 }
 
@@ -152,7 +152,7 @@ function argvOf(command: string): string[] {
  * helper stripped no more than the entry point's name and handed `ledger …` to the ledger dispatcher, which answered
  * `unknown verb "ledger"` — a usage refusal manufactured by the harness, not by the refusal under test.
  */
-async function scopeReply(root: string, changeId: string, argv: string[]): Promise<string> {
+async function scopeReply(root: string, argv: string[]): Promise<string> {
     const chunks: string[] = [];
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
         chunks.push(String(chunk));
@@ -165,7 +165,7 @@ async function scopeReply(root: string, changeId: string, argv: string[]): Promi
         // **No change id out of band.** The road must carry the change itself, or the guard would measure "no placeholder"
         // rather than "the road is executable": a road that named no change at all would otherwise still run.
         expect(argv, `the printed road must carry the change it is about: ${argv.join(' ')}`).toContain('--change');
-        await runScopeCommand([...argv, '--change', changeId], root);
+        await runScopeCommand(argv, root);
         return chunks.join('');
     } catch (error) {
         return `${chunks.join('')}\n${(error as Error).message}`;

@@ -71,17 +71,22 @@ export function checksForExecutionSandbox(
   authorRoot: string,
   sandboxRoot: string,
 ): CheckCommand[] {
+  // `--root` is accepted as a filesystem path, while string declarations carry
+  // canonical absolute references. Normalize once so a trailing separator cannot
+  // make cwd and command/args/env answer different questions.
+  const canonicalAuthorRoot = resolve(authorRoot);
+  const canonicalSandboxRoot = resolve(sandboxRoot);
   return checks.map((check) => {
-    const cwd = mapRepositoryPath(check.cwd ?? authorRoot, authorRoot, sandboxRoot);
+    const cwd = mapRepositoryPath(check.cwd ?? canonicalAuthorRoot, canonicalAuthorRoot, canonicalSandboxRoot);
     if (!cwd) throw new Error(`Seal check cwd must be inside the repository for isolated execution: ${check.cwd ?? authorRoot}`);
     return {
       ...check,
       execution: {
-        command: rewriteAuthorReference(check.command, authorRoot, sandboxRoot),
-        args: (check.args ?? []).map((arg) => rewriteAuthorReference(arg, authorRoot, sandboxRoot)),
+        command: rewriteAuthorReference(check.command, canonicalAuthorRoot, canonicalSandboxRoot),
+        args: (check.args ?? []).map((arg) => rewriteAuthorReference(arg, canonicalAuthorRoot, canonicalSandboxRoot)),
         cwd,
         ...(check.env
-          ? { env: Object.fromEntries(Object.entries(check.env).map(([key, value]) => [key, rewriteAuthorReference(value, authorRoot, sandboxRoot)])) }
+          ? { env: Object.fromEntries(Object.entries(check.env).map(([key, value]) => [key, rewriteAuthorReference(value, canonicalAuthorRoot, canonicalSandboxRoot)])) }
           : {}),
       },
     };
@@ -155,56 +160,33 @@ async function assertRuntimeLinksContained(directory: string, runtimeRoot = dire
 }
 
 function mapRepositoryPath(path: string, authorRoot: string, sandboxRoot: string): string | null {
-  // An absolute path outside the author root is not a repository reference; a relative path is resolved against the author
-  // root, which is what a `cwd` means. Both questions reduce to the same one — is this value the root, or under it as a path
-  // segment — which is why the executed arguments and `cwd` now ask one predicate instead of two rules.
-  if (path.startsWith('/') && path !== authorRoot && !path.startsWith(authorRoot.endsWith('/') ? authorRoot : `${authorRoot}/`)) return null;
-  const relativePath = relative(authorRoot, resolve(authorRoot, path));
+  const candidate = resolve(authorRoot, path);
+  const relativePath = relative(authorRoot, candidate);
   if (relativePath === '' || relativePath === '..' || relativePath.startsWith('../')) return relativePath === '' ? sandboxRoot : null;
   return join(sandboxRoot, relativePath);
 }
 
 /**
- * Map a value the declaration wrote into the snapshot, rewriting **occurrences of the author root that are path segments**.
+ * Map path-segment occurrences of the author root into the snapshot.
  *
- * This used to be `value.replaceAll(authorRoot, sandboxRoot)`, which rewrote every occurrence including ones that are part of
- * a longer name: with the author root `/app` the argument `tests/application` reached the command as
- * `tests/tmp/kata-seal-execution-XXXXlication`, so the argument the check declared was not the argument the sandbox ran, and
- * the corruption was visible only in the log
- * (`docs/superpowers/reports/2026-10-10-workspace-root-substitution-corrupts-check-arguments.md`).
- *
- * The rule is the **path segment**, not the whole value and not the substring: an occurrence counts as a reference when it is
- * followed by a path separator or by the end of the value, and never when it is followed by another character. So
- * `/app/tests/support` is mapped, a path embedded inside a script argument (`…file='/app/second-started'…`) is mapped because
- * the working tree it points into has a snapshot copy, and `tests/application` is left exactly as written because `application`
- * is not `app`. Both halves are load-bearing: dropping the first breaks the isolation the earlier tests rely on, dropping the
- * second is the defect the report measured.
+ * A declaration value may contain more than one root-like substring. Each real
+ * root reference is mapped independently; a longer name and a genuine author
+ * path can coexist in a shell argument, and leaving the genuine path behind
+ * would make the sandbox read the author checkout. A preceding slash is not a
+ * boundary: `//<root>` is nested under another path, not a reference beginning
+ * at the filesystem root.
  */
 function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: string): string {
-  const occurrences: number[] = [];
-  for (let at = value.indexOf(authorRoot); at !== -1; at = value.indexOf(authorRoot, at + 1)) occurrences.push(at);
-  if (occurrences.length === 0) return value;
-  // **Both boundaries, and all-or-nothing.** A root occurrence is a reference only when it is a whole path segment: the
-  // character before it is not part of a path segment (so `snapshot/app/x` is not a reference to `/app`), and the character
-  // after it is a separator or the end of the value (so `tests/application` is not either). An independent review round
-  // measured the one-sided rule rewriting the tail of values that are not repository references at all
-  // (`/tmp/snapshot/app/x` became `/tmp/snapshot<sandbox>/x`), so the whole value is left exactly as written when any of its
-  // occurrences fails either boundary: a string that only partly looks like a repository path is not one, and rewriting the
-  // part that looks right corrupts the rest.
-  const isSegment = (at: number): boolean => {
-    const before = at === 0 ? '/' : value[at - 1];
-    const after = at + authorRoot.length;
-    const endsSegment = after === value.length || value[after] === '/';
-    const startsSegment = !/[A-Za-z0-9._-]/u.test(before);
-    return startsSegment && endsSegment;
-  };
-  if (!occurrences.every(isSegment)) return value;
   let result = '';
   let written = 0;
-  for (const at of occurrences) {
-    result += value.slice(written, at) + sandboxRoot;
-    written = at + authorRoot.length;
+  for (let at = value.indexOf(authorRoot); at !== -1; at = value.indexOf(authorRoot, at + authorRoot.length)) {
+    const before = at === 0 ? '' : value[at - 1];
+    const after = at + authorRoot.length;
+    const isReference = (at === 0 || (before !== '/' && !/[A-Za-z0-9._-]/u.test(before)))
+      && (after === value.length || value[after] === '/');
+    result += value.slice(written, at) + (isReference ? sandboxRoot : authorRoot);
+    written = after;
   }
-  return result + value.slice(written);
+  return written === 0 ? value : result + value.slice(written);
 }
 
