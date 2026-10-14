@@ -168,6 +168,7 @@ function mapRepositoryPath(path: string, authorRoot: string, sandboxRoot: string
 
 /**
  * Map path-segment occurrences of the author root into the snapshot.
+ * Map path-segment occurrences of the author root into the snapshot.
  *
  * A declaration value may contain more than one root-like substring. Each real
  * root reference is mapped independently; a longer name and a genuine author
@@ -176,13 +177,45 @@ function mapRepositoryPath(path: string, authorRoot: string, sandboxRoot: string
  * boundary: `//<root>` is nested under another path, not a reference beginning
  * at the filesystem root.
  */
+/**
+ * **What continues a name: letters, marks and digits in any script, plus the punctuation file names carry.**
+ *
+ * The three classes are not a taste: they are the characters that make the occurrence part of a longer *name* rather than
+ * a value of its own. An independent round measured what happens when this is written as an ASCII class
+ * (`/[A-Za-z0-9._-]/u`): it answers `false` for `é` and `据`, so `é<root>/x` was judged to begin a path segment and a
+ * longer name was rewritten into the sandbox — the value the check declared was not the value the sandbox ran, which is
+ * the whole subject of this file. `M` (combining marks) is in the class because a decomposed name is still one name.
+ */
+const NAME_CHARACTER = /[\p{L}\p{M}\p{N}._-]/u;
+
+/**
+ * The **code point** that ends just before `at` — not the single UTF-16 unit that happens to sit there.
+ *
+ * A name character outside the basic multilingual plane (`\u{10400}`, and every other character whose code point needs two
+ * units) leaves its trailing surrogate at `value[at - 1]` when a root follows it. A class written over *characters* answers
+ * `false` for a lone surrogate, so the occurrence was judged to begin a path segment and a longer name was rewritten — the
+ * same defect the ASCII class produced, one plane further out. Measured by an independent round.
+ */
+function precedingCharacter(value: string, at: number): string {
+  if (at === 0) return '';
+  const low = value.charCodeAt(at - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && at >= 2) {
+    const high = value.charCodeAt(at - 2);
+    if (high >= 0xd800 && high <= 0xdbff) return value.slice(at - 2, at);
+  }
+  return value[at - 1]!;
+}
+
 function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: string): string {
   let result = '';
   let written = 0;
   for (let at = value.indexOf(authorRoot); at !== -1; at = value.indexOf(authorRoot, at + authorRoot.length)) {
-    const before = at === 0 ? '' : value[at - 1];
+    const before = precedingCharacter(value, at);
     const after = at + authorRoot.length;
-    const isReference = (at === 0 || (before !== '/' && !/[A-Za-z0-9._-]/u.test(before)))
+    // **Both sides read the same way**: the character before the occurrence must not continue a name, and the character
+    // after it must be a separator or the end of the value. Reading the left side as the raw unit `value[at - 1]` made a
+    // name character outside the basic plane (two units) look like a separator.
+    const isReference = (before === '' || (before !== '/' && !NAME_CHARACTER.test(before)))
       && (after === value.length || value[after] === '/');
     result += value.slice(written, at) + (isReference ? sandboxRoot : authorRoot);
     written = after;

@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
+import { runTasksCommand } from '../../src/cli/tasks.js';
 import { initLayout } from '../../src/core/layout.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { runWorkflowCommand } from '../../src/cli/workflow.js';
 
 const run = promisify(execFile);
 const roots: string[] = [];
@@ -36,7 +38,7 @@ const roots: string[] = [];
  * wrong" from "the domain said no" — the sentences are the only signal. When the parser grows a refusal sentence, it
  * belongs here; the case below fails if one of the known sentences stops matching, so the vocabulary cannot rot silently.
  */
-const USAGE_REFUSAL = /is not a flag the ledger family reads|unknown ledger flag|unknown verb|unknown action|unknown subcommand|unknown scope|requires --reason|is not a known|^usage:|not a function|Cannot read|is required|are both required|are all required|needs --reason|must state the domain|must be one of|requires a workspace-relative|no paths to freeze/i;
+const USAGE_REFUSAL = /Unknown [a-z]+ option|Unexpected tasks argument|is not a flag the ledger family reads|unknown ledger flag|unknown verb|unknown action|unknown subcommand|unknown scope|requires --reason|is not a known|^usage:|not a function|Cannot read|is required|are both required|are all required|needs --reason|must state the domain|must be one of|requires a workspace-relative|no paths to freeze/i;
 
 /**
  * **What this classifier can and cannot do, measured over three review rounds.**
@@ -51,9 +53,12 @@ const USAGE_REFUSAL = /is not a flag the ledger family reads|unknown ledger flag
  * rule judged an honest operator's road unrunnable; the pinning case below keeps that counterexample red-able.
  *
  * **Boundary, stated rather than promised away**: this is a list of the parser's argument phrasings, so it can be incomplete
- * for a phrasing nobody has written yet, and the guard only drives the roads its own fixtures print (currently the seal's
- * anchor, unreadable-declaration and undeclared-change refusals). Completeness is not claimed; the counterexample and the
- * pinned sentences are.
+ * for a phrasing nobody has written yet — the `tasks` family's two sentences were missing from it until this change's own
+ * falsifier measured a road answering `Unknown tasks option: --expected-statement` while the guard stayed green. The guard
+ * drives roads from two places now: the refusals its own fixtures trigger (the seal's anchor, unreadable-declaration and
+ * undeclared-change refusals, and the amendment's compare-and-swap refusal), and the road literals read out of the change's
+ * refusal surface (`REFUSAL_SURFACE` below), which need no trigger at all. What neither covers is a *new* file that prints a
+ * refusal road. Completeness is not claimed; the counterexample and the pinned sentences are.
  */
 function isArgumentRefusal(text: string): boolean {
     return USAGE_REFUSAL.test(text);
@@ -64,8 +69,148 @@ async function drivePrintedAny(root: string, changeId: string, command: string):
     const argv = argvOf(command);
     if (argv[0] === 'ledger') return ledgerReply(root, changeId, argv.slice(1), true);
     if (argv[0] === 'scope') return scopeReply(root, argv.slice(1));
-    throw new Error(`this guard drives the ledger and scope families; it does not know how to run: ${command}`);
+    if (argv[0] === 'tasks') return tasksReply(root, argv.slice(1));
+    if (argv[0] === 'build') return buildReply(root, argv.slice(1));
+    throw new Error(`this guard drives the ledger, scope, tasks and build families; it does not know how to run: ${command}`);
 }
+
+/**
+ * Drive a road the `tasks` family would receive.
+ *
+ * **The workspace root travels out of band, and the road itself does not.** `runTasksCommand` resolves the workspace from
+ * the working directory unless the road carries `--root`, while the roads under test are ones an operator runs from the
+ * workspace root — and the harness's workspace is a fixture. So the root is appended here, the way the ledger driver passes
+ * its own; everything the road claims stays verbatim, and it must still carry the change it is about.
+ */
+async function tasksReply(root: string, argv: string[]): Promise<string> {
+    const chunks: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+    });
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+        expect(argv, `the printed road must carry the change it is about: ${argv.join(' ')}`).toContain('--change');
+        const reply = await runTasksCommand(argv.includes('--root') ? argv : [...argv, '--root', root]);
+        // **A refusal's sentence is returned as text, not as JSON.** The roads live inside that sentence, and `JSON.stringify`
+        // escapes their quotes — an escaped quote is not a quote to the argv splitter, so the road under test arrived with
+        // `\"the` and `criterion` as two arguments and the family refused *that*. The envelope is JSON only when there is no
+        // sentence to read.
+        const refusal = (reply as { error?: unknown }).error;
+        return `${chunks.join('')}\n${typeof refusal === 'string' ? refusal : JSON.stringify(reply)}`;
+    } catch (error) {
+        return `${chunks.join('')}\n${(error as Error).message}`;
+    } finally {
+        stdout.mockRestore();
+        process.exitCode = previousExitCode;
+    }
+}
+
+/**
+ * Drive a road the workflow family would receive (`kata-cli build --change <id> --seal`).
+ *
+ * **The caveat is stated, not implied.** `runWorkflowCommand` reads the flags it knows with `switchPresent`, so a flag the
+ * family does not have is ignored rather than refused: for its roads this driver proves the invocation is accepted, not that
+ * every flag is read. The `tasks` driver above exists precisely because that family's parser *does* refuse an unknown flag —
+ * which is where this change's own refusal died.
+ */
+async function buildReply(root: string, argv: string[]): Promise<string> {
+    const at = argv.indexOf('--change');
+    const taskId = at === -1 ? undefined : argv[at + 1];
+    expect(taskId, `a workflow road must carry the change it is about: ${argv.join(' ')}`).toBeDefined();
+    expect(taskId).not.toMatch(/^</);
+    try {
+        return JSON.stringify(await runWorkflowCommand('build', taskId!, root, 'pi', argv));
+    } catch (error) {
+        return (error as Error).message;
+    }
+}
+
+/**
+ * **The refusal sites this change touches: the files whose refusals print a road.**
+ *
+ * The list is declared here rather than derived, and the reason is stated rather than implied: the change's declaration
+ * lives in the governed store, which a test may not read. So the source sweep below drives every road literal in every file
+ * listed, and a *new* file that prints a refusal road is the one thing this list cannot see.
+ */
+const REFUSAL_SURFACE = [
+    'src/workflow/seal-preflight.ts',
+    'src/store/review-request.ts',
+    'src/quality/acceptance-amendment.ts',
+];
+
+/**
+ * Every backticked `kata-cli …` road in a source file, template holes and operator placeholders intact.
+ *
+ * **A road is read the way a template is written, holes and all.** The first version of this scan stopped at the first
+ * backtick, and an independent round measured the consequence: `src/workflow/seal-preflight.ts` prints its `scope change`
+ * road with a nested template (`.map((path) => \`--add ${path}\`)`), so the scan came back with a fragment and the guard
+ * drove *that* — evidence about a road nobody wrote. Nesting is tracked now, and a template the scan cannot close is a named
+ * failure rather than a quiet half-road.
+ */
+function roadLiteralsOf(source: string, file: string): string[] {
+    const roads: string[] = [];
+    let at = source.indexOf('`kata-cli ');
+    while (at !== -1) {
+        let index = at + 1;
+        let depth = 0;
+        let end = -1;
+        while (index < source.length) {
+            const character = source[index]!;
+            if (character === '\\') { index += 2; continue; }
+            if (character === '$' && source[index + 1] === '{') { depth += 1; index += 2; continue; }
+            if (character === '}' && depth > 0) { depth -= 1; index += 1; continue; }
+            if (character === '`' && depth === 0) { end = index; break; }
+            index += 1;
+        }
+        if (end === -1) throw new Error(`${file} prints a road whose template this scan cannot close: ${source.slice(at, at + 80)}`);
+        roads.push(source.slice(at + 1, end));
+        at = source.indexOf('`kata-cli ', end);
+    }
+    return roads;
+}
+
+/** Collapse every balanced `${…}` hole in a road to one `x`: what the road *claims* stays verbatim, its values do not. */
+function collapseHoles(road: string): string {
+    let out = '';
+    let index = 0;
+    while (index < road.length) {
+        if (road[index] === '$' && road[index + 1] === '{') {
+            let depth = 1;
+            index += 2;
+            while (index < road.length && depth > 0) {
+                if (road[index] === '$' && road[index + 1] === '{') { depth += 1; index += 2; continue; }
+                if (road[index] === '}') depth -= 1;
+                index += 1;
+            }
+            out += 'x';
+            continue;
+        }
+        out += road[index];
+        index += 1;
+    }
+    return out;
+}
+
+/**
+ * Make a road read from source runnable without pretending to know its values: a template hole and an operator placeholder
+ * both become one token, and the change the road is about becomes the fixture's. What is under test is the road's
+ * *vocabulary* — the flags its family reads — so the values only have to parse.
+ */
+function substitutedRoad(road: string, taskId: string): string {
+    const argv = argvOf(collapseHoles(road).replace(/<[^>\s]+>/g, 'x'));
+    for (let index = 0; index < argv.length - 1; index += 1) {
+        if (argv[index] === '--change' || argv[index] === '--task') argv[index + 1] = taskId;
+    }
+    return `kata-cli ${argv.map((token) => (/\s/.test(token) ? `"${token}"` : token)).join(' ')}`;
+}
+
+/**
+ * **The parser's sentence for a flag or a verb it does not have.** Narrower than `USAGE_REFUSAL` on purpose: this pattern is
+ * only ever about the road's vocabulary, so the source sweep can assert it over roads whose state it cannot build.
+ */
+const UNKNOWN_VOCABULARY = /is not a flag the [a-z]+ family reads|Unknown tasks option|unknown ledger flag|unknown verb|unknown action|unknown subcommand|unknown scope/i;
 
 
 async function git(root: string, args: string[]): Promise<void> {
@@ -255,6 +400,11 @@ describe('every refusal this change adds names a command that works there', () =
             '--out requires a workspace-relative file path, because the record it writes has to be inside the repository',
             '--file <set.json> (the wide form) or --file <item.json> with --id <evidence-id> (the narrow form) is required.',
             '--reason <why> is required: the one operation that may rewrite evidence must say why.',
+            // And the `tasks` family's own two, measured while repairing this change: a road printed with a flag that family
+            // does not read answers `Unknown tasks option: …`, and this vocabulary did not know that sentence — so the guard
+            // stayed green over the very road the class is about.
+            'Unknown tasks option: --expected-statement',
+            'Unexpected tasks argument: --oops',
         ];
         for (const sentence of parserSentences) {
             expect(sentence, `this parser refusal must be recognised as a usage refusal: ${sentence}`).toMatch(USAGE_REFUSAL);
@@ -310,5 +460,55 @@ describe('every refusal this change adds names a command that works there', () =
         // The road runs: the flags it prints are the flags the family accepts.
         const answer = await drivePrintedAny(root, taskId, scopeRoad!.replace('<path>', 'src/extra.ts'));
         expect(isArgumentRefusal(answer), `the printed road must not be refused for its arguments: ${scopeRoad} -> ${answer}`).toBe(false);
+    });
+
+    it('the amendment\'s compare-and-swap refusal prints a road the tasks family accepts', async () => {
+        // **The refusal this change's own repair commit printed without walking it.** `src/quality/acceptance-amendment.ts`
+        // told the operator to "re-run with --expected-statement set to that text", and no parser reads that flag: an
+        // independent round measured it by driving the printed road, which answered `Unknown tasks option: --expected-statement`.
+        // The road is now the document the operator actually writes, and it is walked here.
+        const taskId = 'road-amendment';
+        const root = await fixture(taskId);
+        const document = join(root, 'amendment.json');
+        const writeDocument = async (expectedStatement: string): Promise<void> => {
+            await writeFile(document, `${JSON.stringify({ expectedStatement, statement: 'the correction this amendment carries' }, null, 2)}\n`, 'utf8');
+        };
+        await writeDocument('the text this amendment believes is on disk');
+        const refused = await tasksReply(root, [
+            'amend-acceptance', '--change', taskId, '--id', 'AC-1', '--file', document, '--reason', 'the criterion asserted a predicate the code does not have',
+        ]);
+
+        expect(refused, 'the fixture must really trigger the compare-and-swap refusal').toContain('is not the one this amendment was written against');
+        const commands = printedCommands(refused);
+        expect(commands.length, 'this refusal must name a road').toBeGreaterThan(0);
+        for (const command of commands) {
+            expect(command, 'the change id is in hand, so it must not be a placeholder').not.toMatch(/--change </);
+            // The document is the operator's to write — the refusal names the text it has to carry — so the road is walked with one.
+            await writeDocument('the text this amendment believes is on disk');
+            const reply = await tasksReply(root, argvOf(command.replace('<path>', document)));
+            expect(isArgumentRefusal(reply), `the printed road must be a command the tasks family accepts: ${command} -> ${reply}`).toBe(false);
+        }
+    });
+
+    it('every road the change\'s refusal surface prints is a command its family accepts', async () => {
+        // **The hole this case exists for: the guard only ever held the roads its own fixtures produced.** The round that
+        // measured the unrunnable amendment road also measured that a refusal outside those fixtures cannot redden this case
+        // — `drivePrintedAny` threw for every family it did not know, and no fixture printed that road. So this case does not
+        // trigger refusals at all: it takes the road literals out of the *source* of the change's refusal surface and drives
+        // each one, with the change the road is about supplied by the fixture and the operator's own inputs left as tokens.
+        // A road whose flags a family does not read comes back as that family's unknown-vocabulary sentence; a road that does
+        // not carry the change is refused by the driver above.
+        const taskId = 'road-surface';
+        const root = await fixture(taskId);
+        for (const file of REFUSAL_SURFACE) {
+            const source = await readFile(join(process.cwd(), file), 'utf8');
+            const roads = roadLiteralsOf(source, file);
+            expect(roads.length, `${file} prints no road at all, so this surface list is stale`).toBeGreaterThan(0);
+            for (const road of roads) {
+                const command = substitutedRoad(road, taskId);
+                const reply = await drivePrintedAny(root, taskId, command);
+                expect(UNKNOWN_VOCABULARY.test(reply), `${file} prints a road whose vocabulary its family does not have: ${command} -> ${reply}`).toBe(false);
+            }
+        }
     });
 });

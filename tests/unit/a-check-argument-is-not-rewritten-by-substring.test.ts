@@ -49,4 +49,22 @@ describe('an argument that merely contains the root is not rewritten', () => {
         const execution = executionOf({ kind: 'test', command: 'node', args: ['--watch', 'src/app.ts'], cwd: authorRoot });
         expect(execution?.args).toEqual(['--watch', 'src/app.ts']);
     });
+
+    it('leaves a value whose root occurrence continues into a longer name written in another script', () => {
+        // **The boundary class was ASCII, so a longer name written in another script looked like a separator.** An
+        // independent round measured a value with `é` / `据` in front of the root: `/[A-Za-z0-9._-]/u` answers false for
+        // both, the occurrence was judged to begin a path segment, and a longer *name* was rewritten into the sandbox. The
+        // declared boundary is "the preceding character does not continue a name", and a name is not ASCII.
+        const execution = executionOf({
+            kind: 'test',
+            command: 'node',
+            // **And a name character is not one UTF-16 unit either.** The second round that touched this boundary measured the
+            // astral case: `\u{10400}` is *two* units, `value[at - 1]` is its trailing surrogate, and a class written over
+            // *characters* answers `false` for a lone surrogate — so the name `\u{10400}` + root was rewritten too. A code
+            // point that spans two units is still one name character.
+            args: [`é${authorRoot}/x`, `数据${authorRoot}/x`, `\u{10400}${authorRoot}/x`],
+            cwd: authorRoot,
+        });
+        expect(execution?.args).toEqual([`é${authorRoot}/x`, `数据${authorRoot}/x`, `\u{10400}${authorRoot}/x`]);
+    });
 });

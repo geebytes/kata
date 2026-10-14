@@ -34,7 +34,7 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 
 ## 2. 修法（取报告的 A，并写成"一处判定"）
 
-`rewriteAuthorReference` 改为：**只有当作者根的每一次出现都成段（左边界不是路径段字符、右边界是 `/` 或值尾）时才替换**；任何一次出现不成段 ⇒ **整个值原样通过**。
+`rewriteAuthorReference` 改为**逐次出现**判定：作者根的某一次出现，只有在**左侧不接续一个名字**（值首，或前一字符既不是 `/` 也不是**名字字符**——任意文字的字母、组合记号、数字，加 `.` `_` `-`）且**右侧是 `/` 或值尾**时才算引用并被映射；一次出现不成立**只影响它自己**，同一值里其它成段的出现照样映射（§4 与正对照断言了这一点）。
 
 ```
 '/app'              → sandboxRoot

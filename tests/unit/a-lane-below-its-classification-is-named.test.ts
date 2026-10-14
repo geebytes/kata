@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { runWorkflowCommand } from '../../src/cli/workflow.js';
+import { classifyLaneAndDeclaration } from '../../src/quality/classification.js';
+import { defaultPolicy } from '../../src/kernel/policy.js';
 
 describe('the lane and declaration classification are reported together', () => {
     const roots: string[] = [];
@@ -56,5 +58,15 @@ describe('the lane and declaration classification are reported together', () => 
         ]));
         expect(stored.riskClasses).toEqual(expect.arrayContaining(['consistency', 'privilege']));
         expect(stored.facts).toMatchObject({ declaredPaths: ['src/kernel/risk.ts'], wideChange: false });
+    });
+
+    it('does not report a lane below the classification it equals', () => {
+        // **The pair a comparison written `<` versus `<=` flips, and the pair a second ordering can still get wrong.** The
+        // case that used to stand here scanned the source for the word `TIER_RANK` and was fooled by a comment: an
+        // independent round put a hand-written ordering on the line and left `TIER_RANK` in a comment, and it stayed green.
+        // What is decidable is the *value*: a lane whose tier equals the classification's tier is not below it.
+        const answer = classifyLaneAndDeclaration({ paths: ['src/anything.ts'], policy: defaultPolicy(), reviewMode: 'std' });
+        expect(answer.laneTier).toBe(answer.classification.tier);
+        expect(answer.laneBelow, 'a lane that equals the classification is not below it').toBe(false);
     });
 });

@@ -182,7 +182,7 @@ export async function amendAcceptance(input: {
         if (criterion.statement !== input.expectedStatement) {
             return {
                 ok: false,
-                refused: `the statement for ${input.acceptanceId} is not the one this amendment was written against, so nothing was changed. On disk it reads: ${JSON.stringify(criterion.statement)} — re-run with --expected-statement set to that text if correcting it is intended.`,
+                refused: `the statement for ${input.acceptanceId} is not the one this amendment was written against, so nothing was changed. On disk it reads: ${JSON.stringify(criterion.statement)} — write that text as the \`expectedStatement\` field of the amendment document and re-run \`kata-cli tasks amend-acceptance --change ${input.taskId} --id ${input.acceptanceId} --file <path> --reason ${JSON.stringify(input.reason.trim())}\` if correcting it is intended.`,
             };
         }
         if ((criterion.claims ?? []).length > 0) {

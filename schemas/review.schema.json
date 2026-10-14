@@ -140,6 +140,33 @@
         "minLength": 1
       },
       "description": "The findings in this record that carry no defect class. Reported rather than refused: a payload written before the field existed must still record, and the gap has to be a measured fact instead of a silent hole."
+    },
+    "recurrenceAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["triggerClasses", "conclusion", "evidence", "nextAction"],
+      "properties": {
+        "triggerClasses": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "The recurring defect classes the round was asked to explain, named as the packet named them."
+        },
+        "conclusion": {
+          "enum": ["behaviour_defect", "instrument_unsound", "claim_scope_error", "workflow_routing_error", "not_same_class"],
+          "description": "The single root cause the round concluded, from a closed vocabulary so a later reader can compare two rounds rather than two essays."
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "The concrete records and source references that separate this conclusion from the alternatives it was asked to rule out."
+        },
+        "nextAction": {
+          "enum": ["repair", "restate_claim", "resume_certification"],
+          "description": "What the conclusion permits next. Paired with the conclusion by the validator, because a root cause that asks for the wrong next step is how a loop keeps buying rounds: behaviour_defect, instrument_unsound and workflow_routing_error require repair, claim_scope_error requires restate_claim, not_same_class requires resume_certification."
+        }
+      },
+      "description": "The durable root-cause conclusion of a round that was dispatched as a recurrence round (`recurrencePacket` present on the request). Recorded because the whole point of the packet is that the next reader can see what the previous round concluded — a conclusion that lives only in a transcript is the finding that vanishes (I-22) one layer up."
     }
   }
 }

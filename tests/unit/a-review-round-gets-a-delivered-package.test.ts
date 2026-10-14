@@ -80,6 +80,8 @@ describe('ledger run delivers the review round its mechanically readable package
                 axes: {
                     qualityEvidence: { tier: string; requirements: Array<{ claimId: string; types: string[]; minimumStrength: number }> };
                     executionAssurance: { achieved: string; floor: string; reviewers: number; quorumOn: string[] };
+                    classification: unknown;
+                    reviewLane: string;
                 };
                 declaration: { ownedPaths: string[]; acceptance: Array<{ id?: string; statement: string }> };
                 falsifiers: Array<{ id: string; file: string; find: string; replace: string; command: string; expectedRedForClaims: string[] }>;
@@ -92,6 +94,11 @@ describe('ledger run delivers the review round its mechanically readable package
             axes: {
                 qualityEvidence: { tier: 'strict', requirements: [{ claimId: 'C-1', types: ['executable_falsifier'], minimumStrength: 3 }] },
                 executionAssurance: { achieved: 'observed', floor: 'observed', reviewers: 1, quorumOn: ['disagreement', 'high_risk'] },
+                // **The two axes nothing asserted until round 5 read them.** The classification clause was *read* but never
+                // decided: a package reporting a hole in place of the record it holds stayed green, and so did one whose lane
+                // axis was a constant. Both are asserted here now, and both carry a declared falsifier.
+                classification: { version: 1, taskId: 'delivered-package', by: 'agent', tier: 'strict', floor: 'medium' },
+                reviewLane: 'strict',
             },
             declaration: {
                 ownedPaths: ['src/a.ts'],

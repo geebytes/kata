@@ -69,11 +69,13 @@ describe('an argument that references the repository is rewritten', () => {
         expect(execution?.cwd).toBe(`${sandboxRoot}/packages/x`);
     });
 
-    it('leaves the whole value alone when any occurrence is not a path segment', () => {
+    it('leaves a value alone when every occurrence continues a longer name', () => {
         // **The one-sided rule corrupted values that are not repository references.** A review round measured that requiring
         // only the right boundary rewrote the tail of `/tmp/snapshot/app/x` — an absolute path outside the repository — into
-        // `/tmp/snapshot<sandbox>/x`, and the same in `appbackup/app/x`. When any occurrence fails either boundary, the value
-        // is not a repository path and is passed through exactly as written.
+        // `/tmp/snapshot<sandbox>/x`, and the same in `appbackup/app/x`. Every value here carries occurrences that each fail a
+        // boundary, so what this case decides is "a value with no reference occurrence reaches the command unchanged"; that
+        // the mapping is per occurrence — one longer name does not spare a sibling real reference — is asserted by the case
+        // above, whose fixture carries both kinds inside one value.
         const execution = checksForExecutionSandbox([
             {
                 kind: 'test',
