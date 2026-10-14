@@ -596,6 +596,7 @@ function isRoundRecord(value: unknown): value is {
     blockingCount?: unknown;
     revisionId?: unknown;
     manifestHash?: unknown;
+    reviewedRevisionId?: unknown;
     findings?: unknown;
     noFindings?: unknown;
 } {
@@ -604,7 +605,8 @@ function isRoundRecord(value: unknown): value is {
     return typeof record.at === 'string'
         && Array.isArray(record.blockingIds)
         && (record.revisionId === undefined || typeof record.revisionId === 'string')
-        && (record.manifestHash === undefined || typeof record.manifestHash === 'string');
+        && (record.manifestHash === undefined || typeof record.manifestHash === 'string')
+        && (record.reviewedRevisionId === undefined || typeof record.reviewedRevisionId === 'string');
 }
 
 export async function readReviewRoundsState(root: string, taskId: string): Promise<ReviewRoundsRead> {
@@ -639,6 +641,7 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
                 at: parsed.at,
                 ...(typeof parsed.revisionId === 'string' ? { revisionId: parsed.revisionId } : {}),
                 ...(typeof parsed.manifestHash === 'string' ? { manifestHash: parsed.manifestHash } : {}),
+                ...(typeof parsed.reviewedRevisionId === 'string' ? { reviewedRevisionId: parsed.reviewedRevisionId } : {}),
                 blockingIds: parsed.blockingIds.filter((id): id is string => typeof id === 'string'),
                 blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
                 // **What the round found, when the row kept it.** Rows written before the field existed simply have nothing

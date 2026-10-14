@@ -1,4 +1,4 @@
-import { readTask } from '../core/task.js';
+import { acceptanceContractHashOf, readTask } from '../core/task.js';
 import { assertTaskLock, withTaskLock, type TaskLock } from '../core/state.js';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { resolveDeclaredLocation, isIgnoredRepositoryPath, normalizeDeclaredPaths, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
@@ -49,6 +49,20 @@ export interface TaskRevision {
    * this answers "what did this revision contain", which is the question the change surface actually asks.
    */
   contentDigests?: Record<string, string>;
+  /**
+   * **The acceptance contract this revision froze**: the hash of the criteria and the matrix as they read at seal time.
+   *
+   * It exists because a certification is *about* a contract, and until this field there was no way for a revision to notice
+   * that the contract had been corrected underneath it: `pathDigests` hashes the declared files, and a criterion lives in
+   * `task.json`, which is deliberately outside revision content identity. Measured on a real change whose one criterion
+   * asserted an implementation the change had falsified — amending it left the revision reporting `current`, so the seal,
+   * the verify pass and the judge verdict all still stood over a sentence nobody had written any more.
+   *
+   * Absent on revisions sealed before the field existed. That case is *refused* by the amendment writer rather than
+   * tolerated: a revision that records no contract cannot tell that one moved, so the certification it carries would
+   * survive the correction it is supposed to lose.
+   */
+  acceptanceContractHash?: string;
   createdAt: string;
   ownershipConflicts?: Array<{ taskId: string; path: string }>;
   ownershipConflictsAcknowledged?: boolean;
@@ -63,9 +77,10 @@ export interface TaskRevision {
  * `repair-entry.ts` printed "the sealed revision still matches the workspace" — a claim about the workspace decided from a
  * declaration eleven of whose twenty-two paths the check had never hashed.
  *
- * **The two ways are different facts and they call for different actions**: `declaration-moved` says the revision is not about
- * the change's declared surface any more (re-seal, which takes on the new declaration), and `superseded` says the content it
- * described has since changed (the verdict bound to it cannot stand). Collapsing them is what made a refusal say something it had
+ * **The ways it can have stopped are different facts and they call for different actions**: `declaration-moved` says the revision is not about
+ * the change's declared surface any more (re-seal, which takes on the new declaration), `superseded` says the content it
+ * described has since changed (the verdict bound to it cannot stand), and `contract-moved` says the acceptance contract it
+ * froze has been amended (the certification was about a sentence the change no longer makes). Collapsing them is what made a refusal say something it had
  * not checked.
  *
  * **And `declaration-moved` is exactly the comparison of the two declarations, and nothing more.** It does *not* say the
@@ -84,6 +99,19 @@ export type RevisionStatus =
    * declaration.
    */
   | { status: 'declaration-moved'; revisionOwnedPaths: string[]; taskOwnedPaths: string[]; added: string[]; removed: string[] }
+  /**
+   * **The acceptance contract moved after the seal** — a criterion was corrected by `tasks amend-acceptance`.
+   *
+   * The payload is the two hashes, because that is the whole comparison: the contract is one value and neither side of it is
+   * a file an operator can diff. The action is a re-seal, which adopts the amended contract — and it is required rather than
+   * optional: a certification, a verify pass and a judge verdict all speak for the contract they were made against, so
+   * letting this revision stay `current` would be certifying the amended contract with evidence for the previous one.
+   *
+   * It is reported even when the criterion's *text* is the only thing that moved, which is the point: the text is what a
+   * reviewer judges the change by, and this repository's measured failure mode is a sentence that asserted an implementation
+   * the change had falsified while every hash it had hashed stayed the same.
+   */
+  | { status: 'contract-moved'; revisionId: string; frozenContractHash: string; taskContractHash: string }
   /**
    * The declared content moved after the seal.
    *
@@ -130,7 +158,11 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   // The id now covers the content snapshot as well as the owned manifest. The manifest hash field itself is unchanged —
   // every existing binding keeps its meaning — but a revision *exists* for a change outside the declaration, which the
   // own  the owned-path hash alone could not express.
-  const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? [], contentSnapshotHash(contentDigests));
+  // **The contract is part of the identity, and that is what makes the amendment mechanism work.** A re-seal after an
+  // amendment hashes identical content, so without a contract term it would resolve to the *existing* revision — which
+  // froze the old contract, and which `revisionStatus` would therefore keep reporting `current`. Two contracts must not
+  // share one identity, for the same reason two contents must not.
+  const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? [], contentSnapshotHash(contentDigests), input.acceptanceContractHash);
   // **This write moves the pointer, so it takes the same lock the review commit holds.** `commitReviewDecision` re-reads
   // the pointer under `withTaskLock` and refuses to write a decision that no longer describes it — but that guarantee held
   // only for writers that take the lock, and this function did not: a seal could land between the revalidation and the
@@ -148,6 +180,8 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
       ...(existing.pathDigests ? {} : { pathDigests }),
       ...(existing.pathKinds ? {} : { pathKinds }),
       ...(existing.contentDigests ? {} : { contentDigests }),
+      // Same shape as the fields above: a reused record is completed with facts the caller supplied, never rewritten.
+      ...(existing.acceptanceContractHash ? {} : (input.acceptanceContractHash ? { acceptanceContractHash: input.acceptanceContractHash } : {})),
       ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
       ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
     };
@@ -189,6 +223,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     pathDigests,
     pathKinds,
     contentDigests,
+    ...(input.acceptanceContractHash ? { acceptanceContractHash: input.acceptanceContractHash } : {}),
     createdAt: new Date().toISOString(),
     ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
     ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
@@ -220,6 +255,13 @@ export interface CreateTaskRevisionInput {
   checkIds?: string[];
   ownershipConflicts?: Array<{ taskId: string; path: string }>;
   ownershipConflictsAcknowledged?: boolean;
+  /**
+   * The acceptance contract as one hash (`acceptanceContractHashOf`), supplied by the caller that already read the task.
+   *
+   * Optional for the same reason `contentDigests` is: a caller that omits it is *naming* an identity rather than deriving
+   * one. Every `src/` caller supplies it — the seal computes it from the same task record it is sealing.
+   */
+  acceptanceContractHash?: string;
 }
 
 /**
@@ -230,12 +272,13 @@ export interface CreateTaskRevisionInput {
  * name a pre-snapshot id explicitly. Since the legacy fallback was removed (design §14) no `src/` caller omits it: the
  * seal always supplies the snapshot, and nothing reads a historical id back into the current identity any more.
  */
-export function revisionIdFor(taskId: string, manifestHash: string, checkIds: string[], contentDigestHash?: string): string {
+export function revisionIdFor(taskId: string, manifestHash: string, checkIds: string[], contentDigestHash?: string, acceptanceContractHash?: string): string {
   const digest = hashContent(JSON.stringify({
     taskId,
     manifestHash,
     checkIds: [...checkIds].sort(),
     ...(contentDigestHash ? { contentDigestHash } : {}),
+    ...(acceptanceContractHash ? { acceptanceContractHash } : {}),
   }));
   return `revision-${digest.slice(0, 16)}`;
 }
@@ -482,6 +525,25 @@ export async function revisionStatus(root: string, revision: TaskRevision, taskI
     throw error;
   });
   if (!task) return { status: 'current' };
+  // **And the contract it was sealed against can have been amended, which no content hash here can see.** A criterion lives
+  // in `task.json`, deliberately outside revision content identity, so before this comparison a corrected sentence left the
+  // seal, the verify pass and the judge verdict standing over a contract the change no longer makes — measured on a change
+  // whose one criterion asserted an implementation its own repair had falsified.
+  //
+  // A revision that recorded no contract is skipped rather than guessed at, and the skip is not a hole: the amendment writer
+  // refuses to amend under such a revision (`acceptance-amendment.ts`), precisely because the amendment would be invisible
+  // to this check.
+  if (revision.acceptanceContractHash !== undefined) {
+    const taskContractHash = acceptanceContractHashOf(task.acceptance, task.acceptanceMatrix);
+    if (taskContractHash !== revision.acceptanceContractHash) {
+      return {
+        status: 'contract-moved',
+        revisionId: revision.id,
+        frozenContractHash: revision.acceptanceContractHash,
+        taskContractHash,
+      };
+    }
+  }
   const taskOwnedPaths = normalizeOwnedPaths(root, task.ownedPaths ?? []);
   const revisionOwnedPaths = [...revision.ownedPaths];
   const same = taskOwnedPaths.length === revisionOwnedPaths.length

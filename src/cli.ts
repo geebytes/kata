@@ -110,6 +110,7 @@ import {
     requireWorkflowReceipt,
     resolveWorkflowProfile,
     runGateCommand,
+    runTaskClassificationCommand,
     runWorkflowCommand,
 } from './cli/workflow.js';
 import { runLedgerCommand } from './cli/ledger.js';
@@ -404,7 +405,7 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (!change) {
         throw new Error(
-            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|ledger|worktree|eval|baseline|wiki|handoff|gate|recover|doctor|revision|relations|orient|hooks|tasks|lifecycle> [change|--change change]',
+            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|classify|open|design|build|verify|archive|hotfix|tweak|collect|next|ledger|worktree|eval|baseline|wiki|handoff|gate|recover|doctor|revision|relations|orient|hooks|tasks|lifecycle> [change|--change change]',
         );
     }
     if (command === 'status') {
@@ -435,6 +436,7 @@ async function runMain(argv: string[]): Promise<void> {
         });
     }
     else if (command === 'next') outputResult(await client.next(change));
+    else if (command === 'classify') outputResult(await runTaskClassificationCommand(change, workspaceRoot, argv.slice(1)));
     else if (isWorkflowCommand(command)) {
         const result = await runWorkflowCommand(command, change, workspaceRoot, workflowPlatform(argv.slice(1)) ?? resolved?.platform, argv.slice(1));
         outputResult(result);

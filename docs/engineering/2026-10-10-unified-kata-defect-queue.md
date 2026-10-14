@@ -98,6 +98,8 @@
 | **I-26**（新，2026-10-12 实测） | **注释点名一个已无调用者的读者**：`digestKeysFor`（`src/quality/code-surface.ts:109`）唯一调用方是私有的 `surfaceDigest`，而它**没有调用方** ⇒ 该读者不可达，注释里把它当作活读者列出属于陈述失真 | 与 I-25 ② 同批：要么恢复调用方，要么删掉这个读者与提及（本仓库既有「删掉死代码」的先例） |
 | **I-22**（新，2026-10-12 实测两次） | **一轮独立复核的 finding 可以不留痕迹地消失**：轮次返回后必须**跨门**才能填该轮的槽位；若作者先去返修，跨门时归档的是**空占位符**，这一轮的 finding **从未被写过**。而 `review.json` 里 `findings: []` 读起来正好像「这一轮干净通过」——CLI 全程无信号。本 change 第 5、6 两轮各中一次（作者流程错误），补记时记录的 `reviewedRevisionId` 已不是该轮实际读的 revision | 机制上二选一：① 跨门前要求该轮结果已落盘；② 把派发事实（`round-runs.json` 里的 runId/结论）也写进 history，使「空槽」与「干净轮」不再同形。任选其一都可，**但必须能区分这两者** |
 | **I-10 的新面**（2026-10-12） | 本 change 七轮里**每轮（第 3～7 轮）都留下至少一条 falsifier 锚点失配**，靠手工重瞄（≥12 次）；另外两类仪器缺陷也在同一族：**变异文本不可解析仍记为红**（R4-F2：E13 的 `find` 只覆盖多行调用的首行 ⇒ 文件语法错误 ⇒ 测试加载失败变红，却被记 `supported`）、**selector 指向不存在的文件**（我自己复审时踩到：vitest 以「找不到文件」退 1，看着像红，与命名的性质无关） | 封存时的机械检查应一起覆盖三件事：锚点**恰好匹配一次**、变异文本**可解析**、selector**存在且真的运行**。设计文档已在 `docs/design/2026-10-10-a-repair-revalidates-the-evidence-it-moved.md` |
+| **I-42**（新，2026-10-13 实测） | **带 claim clause 的验收项仍无法更正**：`kata-cli tasks amend-acceptance`（`src/quality/acceptance-amendment.ts`，本次新增的受控更正入口）**按名拒绝**声明了 `claims` 的验收项——`ClaimDeclaration` 刻意把「一句话」和「必须让这句话成立的检查」绑在一起，只改句子会留下断言旧措辞的检查。该拒绝是对的，但**由此这半条路仍然不存在**：本次实测的 `the-workflow-layer-checks-what-it-claims` 的 AC-3 恰好没有 clause（所以能更正），而任何带 clause 的验收项一旦失真，仍然只能手改 `task.json` | 让 amendment 一次带走**整项**（句子 + 各 clause 的 statement），并对 clause 的 `check` 保持不变做断言；或反过来：把 clause 的 statement 从「自由文本」改成「由 criterion 句子派生」，使二者不可能漂移。前者是较小的改动（约 2 AC），后者更接近本仓库「一处派生」的取向但要先决定 clause 的语义 |
+
 | **U-3（=B-3）** | 已由 change `the-identity-is-computed-where-the-change-is` 改掉根因（身份在作者树算），**在审查轮** | 一个「声明含 `.llmwiki` 且工作树有未提交改动」的用例，确认不再判 superseded（否则仍要靠「先提交受声明路径」这条人工绕行） |
 
 ---

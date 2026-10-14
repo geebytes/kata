@@ -1,5 +1,6 @@
 import type { TaskRelation } from '../core/relations.js';
 import type { TaskClassificationRecord, TaskRecord } from '../core/task.js';
+import type { AcceptanceAmendment } from './acceptance-amendment.js';
 import type { AssuranceLevel, Claim, Evidence, TierName } from '../kernel/types.js';
 import type { Policy } from '../kernel/policy.js';
 
@@ -24,6 +25,14 @@ export type ReviewPackage = {
         ownedPaths: string[];
         acceptance: TaskRecord['acceptance'];
         acceptanceMatrix: TaskRecord['acceptanceMatrix'];
+        /**
+         * **The amendments that produced this contract, if any** — carried so the reviewer judges the correction rather than
+         * only the corrected sentence. A criterion's text is what a certification is *about*, and a contract corrected after
+         * the seal is exactly the fact a reviewer would otherwise have to reconstruct from the diff of a file they are not
+         * given. An unreadable log is a **named hole** here, like the classification: reporting "no amendments" for a log
+         * nobody could read would assert a history that was never established.
+         */
+        acceptanceAmendments: AcceptanceAmendment[] | { unreadable: string };
         claims: Array<Pick<Claim, 'id' | 'statement' | 'riskClass' | 'severity' | 'dependsOn' | 'evidenceIds' | 'boundary'>>;
     };
     falsifiers: Array<{
@@ -51,6 +60,7 @@ export function buildReviewPackage(input: {
     tier: string;
     requirements: Array<{ claimId: string; types: string[]; minimumStrength: number }>;
     classification: TaskClassificationRecord | { unreadable: string };
+    acceptanceAmendments: AcceptanceAmendment[] | { unreadable: string };
     claims: Claim[];
     evidence: Evidence[];
 }): ReviewPackage {
@@ -74,6 +84,7 @@ export function buildReviewPackage(input: {
             ownedPaths: [...(input.task.ownedPaths ?? [])],
             acceptance: input.task.acceptance,
             acceptanceMatrix: input.task.acceptanceMatrix,
+            acceptanceAmendments: input.acceptanceAmendments,
             claims: input.claims.map(({ id, statement, riskClass, severity, dependsOn, evidenceIds, boundary }) => ({
                 id, statement, riskClass, severity, dependsOn, evidenceIds, ...(boundary === undefined ? {} : { boundary }),
             })),

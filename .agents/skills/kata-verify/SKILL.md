@@ -186,6 +186,16 @@ Do this:
 12. **Name the revision you reviewed.** A result is recorded against the revision that was current when it was written, which
     is not necessarily the one you read. State, in the result itself, which revision your readings apply to.
 
+## Recurrence circuit breaker
+
+When the ReviewRequest carries `recurrencePacket`, this is **not** an ordinary certification round. The packet is emitted only when a mechanizable defect class reappears across more than one recorded round and at least one occurrence is inside a prior repair.
+
+1. Start with the packet's `rounds` and its three `sources` (`review-rounds.jsonl`, `review-history.jsonl`, and the active `review.json`). Reconstruct the sequence of finding → repair → later finding from those records before judging the current implementation. Do not trust the author's prose as the history.
+2. Classify the recurrence before proposing another local repair: choose exactly one root-cause conclusion — a real behaviour defect, an unsound instrument, a claim whose subject exceeds what its evidence can decide, a workflow route that cannot execute, or a demonstrated non-recurrence. State the concrete record and source lines that distinguish that conclusion from the alternatives.
+3. If the cause is a real defect, instrument or route, report the **class-level** repair and the smallest counterexample. If it is claim scope, identify the narrower branch/derivation/value that the declared falsifier can actually decide. Do not expand the normal review surface or add another hand-written exception list merely to make this round pass.
+4. Return the normal structured findings plus a `recurrenceAnalysis` object containing the trigger classes, the root-cause conclusion, the supporting record references, and whether the next action is `repair`, `restate_claim`, or `resume_certification`. A result that omits a root-cause conclusion when the packet was present is incomplete.
+5. Do not recommend another ordinary certification round until the recorded root cause has been repaired or the packet has shown that the findings are not one class. The circuit breaker changes the *kind of review*, never the strict gate or the requirement to independently certify the resulting repair.
+
 What the gate refuses, so the request can be satisfied rather than guessed at: an unreadable ledger is refused (written
 and unparseable is not the same fact as never written); a verdict outlives its content, so a declared path that moved
 after the decision refuses the approval and names it; and the assurance floor is `observed` under `strict` **and** under
@@ -314,7 +324,7 @@ If Judge returns FAIL for any acceptance criterion:
    - `stale_evidence` — legacy repository-scoped evidence changed after collection; rebuild
    - `failing_evidence` — tests or checks failed
    - `blocking_review_finding` — a reviewer blocked this acceptance
-   - `revision_superseded` — the sealed revision no longer describes the task — either a declared task-owned path changed after sealing, or the task's declared surface moved; rebuild to create the next revision
+   - `revision_superseded` — the sealed revision no longer describes the task — a declared task-owned path changed after sealing, the task's declared surface moved, or an acceptance criterion was amended (`tasks amend-acceptance`); rebuild to create the next revision
    - `cross_revision_evidence` — the acceptance is covered by evidence from more than one revision; seal one revision
    - `insufficient_evidence_level` — the acceptance requires integration or entrypoint evidence that is missing; add it
    - `unresolved_repair_obligation` — a repair obligation from the review or the Judge is still unresolved

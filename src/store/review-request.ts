@@ -26,7 +26,9 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
 import { readTaskClassification, type TaskClassificationRecord } from '../core/task.js';
-import { readLoopReplay, type LoopReplay } from '../quality/loop-replay.js';
+import { loopReplayOfReadable, type LoopReplay } from '../quality/loop-replay.js';
+import { recurrencePacketOfReadable, type RecurrencePacket } from '../quality/recurrence-packet.js';
+import { readReviewRoundsState } from '../quality/repair.js';
 import { planDigestOf, questionForComparison, declaredPaths, declaredSubjectRevision, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
@@ -36,6 +38,7 @@ import type { EvidenceType } from '../kernel/types.js';
 import { readTaskRelations } from '../core/relations.js';
 import { readTask } from '../core/task.js';
 import { buildReviewPackage, type ReviewPackage } from '../quality/review-package.js';
+import { readAcceptanceAmendments, type AcceptanceAmendment } from '../quality/acceptance-amendment.js';
 
 export type ClaimRequest = {
     claimId: string;
@@ -84,6 +87,8 @@ export type ReviewRequest = {
     missingGenerators?: string[];
     unreadableArtefacts?: string[];
     loopReplay?: LoopReplay;
+    /** A deterministic root-cause handoff when a mechanizable class recurs inside a repair. */
+    recurrencePacket?: RecurrencePacket;
     /**
      * **The judgement the round is reviewing alongside the change.** What the declaration classifies as, the lane the profile
      * names, and whether the lane sits below the classification — carried so a reviewer can review *that judgement* rather than
@@ -139,11 +144,21 @@ export async function buildReviewRequest(input: {
     // it"). The reviewer is its real consumer — the shares and the stop-line classes are exactly what a round needs to tell
     // "this loop is recycling its own repairs" from "this class keeps turning up in the original code".
     // The same decision the summary asks, so the two cannot disagree about an absent history (R6-F5).
-    const loopReplay = await readLoopReplay(input.root, input.changeId);
+    const reviewRounds = await readReviewRoundsState(input.root, input.changeId);
+    const loopReplay = loopReplayOfReadable(reviewRounds);
+    const recurrencePacket = recurrencePacketOfReadable(reviewRounds, {
+        reviewRounds: `.kata/tasks/${input.changeId}/review-rounds.jsonl`,
+        reviewHistory: `.kata/tasks/${input.changeId}/review-history.jsonl`,
+        currentReview: `.kata/tasks/${input.changeId}/review.json`,
+    });
     // **The classification the round reviews, read from the change's own record.** A request that omitted it would ask a
     // reviewer to judge a lane they cannot see; one that reported a classification it was handed would report the caller's
     // belief. So it is read here, and an unreadable record is carried as a named hole rather than as an absence.
     const classificationOnRequest = await classificationForRequest(input.root, input.changeId);
+    // **The amendments that produced the contract this round reviews.** Read from the task's own log, like the
+    // classification and for the same reason: a round that judged the corrected sentence without being told it had been
+    // corrected could not ask whether the correction weakened the contract.
+    const amendmentsOnRequest = await acceptanceAmendmentsForRequest(input.root, input.changeId);
     const declaredClasses = declaredDefectClasses(stored);
     const declaredForInstruments = await declaredPaths(input.root, input.changeId);
     const planOverride = tierOverrideFromPlan(stored, ledger.policy);
@@ -232,6 +247,10 @@ export async function buildReviewRequest(input: {
         // reading them off the union's own discriminant is what keeps the message honest about which one was measured.
         const because = sealedStatus.status === 'declaration-moved'
             ? `the task's declaration has moved since it was sealed (added: ${sealedStatus.added.join(', ') || 'none'}; removed: ${sealedStatus.removed.join(', ') || 'none'})`
+            // The third state gets its own sentence for the same reason the second one did: a criterion was amended, which
+            // is not a claim about the files at all, and the old wording would have told the operator to look at content.
+            : sealedStatus.status === 'contract-moved'
+            ? `the acceptance contract has been amended since it was sealed (frozen ${sealedStatus.frozenContractHash.slice(0, 12)}…, now ${sealedStatus.taskContractHash.slice(0, 12)}…), so a certification of the old contract cannot speak for the amended one`
             : 'the content under its declared paths has changed since it was sealed';
         return {
             ok: false,
@@ -280,6 +299,7 @@ export async function buildReviewRequest(input: {
         tier: plan.tier ?? 'unknown',
         requirements: plan.requiredEvidence ?? [],
         classification: classificationOnRequest,
+        acceptanceAmendments: amendmentsOnRequest,
         claims: ledger.claims,
         evidence: ledger.evidence,
     });
@@ -295,6 +315,7 @@ export async function buildReviewRequest(input: {
             // The loop's record for this change, so the round can tell "we are fixing our own fixes" from "this class keeps
             // appearing in the original code" — the reading AC-6 exists to publish, handed to its real consumer.
             ...(loopReplay === null ? {} : { loopReplay }),
+            ...(recurrencePacket === null ? {} : { recurrencePacket }),
             classification: classificationOnRequest,
             reviewPackage,
             deadlineToolCalls: plan.discovery?.deadlineToolCalls ?? null,
@@ -397,4 +418,18 @@ async function classificationForRequest(root: string, changeId: string): Promise
         return { unreadable: `classification.json is absent for task '${changeId}'; the reviewer cannot inspect the classification that was recorded when the lane was chosen` };
     }
     return { unreadable: `classification.json for task '${changeId}' is unreadable: ${result.reason}` };
+}
+
+/**
+ * The acceptance amendments recorded against this change.
+ *
+ * `absent` is an empty list, because "no amendment was ever recorded" is a fact the reviewer can act on; a log that exists
+ * and cannot be read is a **named hole** instead, because reporting it as an empty history would assert that the contract was
+ * never corrected — a claim about a file nobody could open.
+ */
+async function acceptanceAmendmentsForRequest(root: string, changeId: string): Promise<AcceptanceAmendment[] | { unreadable: string }> {
+    const read = await readAcceptanceAmendments(root, changeId);
+    if (read.kind === 'usable') return read.amendments;
+    if (read.kind === 'absent') return [];
+    return { unreadable: `acceptance-amendments.jsonl for task '${changeId}' is unreadable: ${read.reason}` };
 }

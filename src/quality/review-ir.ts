@@ -16,7 +16,7 @@ import { defaultPolicy } from '../kernel/policy.js';
 import { requiredCapabilitiesForNode, type ExecutionNode } from './review-execution.js';
 import { freezeCandidate, type CandidateFreeze } from './recertification.js';
 import type { EvidenceEnvelope } from './evidence.js';
-import type { TaskRecord } from '../core/task.js';
+import { acceptanceContractHashOf, type TaskRecord } from '../core/task.js';
 import type { TaskRevision } from '../workflow/revision.js';
 
 /** The node an independent pass certifies. Defined here because the freeze identity is per node. */
@@ -371,7 +371,7 @@ export function candidateFreezeForBrief(task: TaskRecord, revision: TaskRevision
         : [...(revision?.ownedPaths ?? task.ownedPaths ?? [])].sort();
     return freezeCandidate({
         contentDigests: { ...(revision?.contentDigests ?? revision?.pathDigests ?? {}) },
-        acceptanceHash: hashContent(JSON.stringify({ acceptance: task.acceptance, matrix: task.acceptanceMatrix ?? null })),
+        acceptanceHash: acceptanceContractHashOf(task.acceptance, task.acceptanceMatrix),
         instrumentHash: hashContent(JSON.stringify({
             instruments: task.instruments ?? [],
             rows: rows.map((row) => ({ acceptanceId: row.acceptanceId, testPaths: row.testPaths, evidence: row.evidence })),

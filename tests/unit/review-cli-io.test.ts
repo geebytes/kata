@@ -11,6 +11,7 @@ import { appendClaim, freezeSubject, writePlan, writePolicy, writeSubject } from
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
+import { appendReviewRound } from '../../src/quality/repair.js';
 
 let root: string;
 const changeId = 'review-cli-io';
@@ -337,6 +338,40 @@ describe('review CLI I/O', () => {
         const repeat = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/round.json' });
         expect(repeat.success).toBe(false);
         expect(repeat.error).toContain('already recorded');
+    });
+
+    it('refuses to file an ordinary result when the request activated the recurrence circuit breaker', async () => {
+        await prepareRequest();
+        await appendReviewRound(root, changeId, {
+            at: '2026-10-11T00:00:00.000Z', revisionId: 'revision-one', blockingIds: ['R1-F1'], blockingCount: 1,
+            findings: [{ id: 'R1-F1', severity: 'major', class: 'comparison-unnamed', origin: 'original' }],
+        });
+        await appendReviewRound(root, changeId, {
+            at: '2026-10-12T00:00:00.000Z', revisionId: 'revision-two', blockingIds: ['R2-F1'], blockingCount: 1,
+            findings: [{ id: 'R2-F1', severity: 'major', class: 'comparison-unnamed', origin: 'repair' }],
+        });
+        await writeCurrentState(root, {
+            taskId: changeId, phase: 'review', actor: { id: 'kata-reviewer', role: 'reviewer' }, updatedAt: '2026-10-12T00:00:00.000Z',
+        });
+        const finding = { id: 'R3-F1', taskId: changeId, severity: 'major', acceptanceId: 'AC-1', message: 'the recurring class is still present' };
+        await writeFile(join(root, 'tmp', 'ordinary.json'), `${JSON.stringify({ findings: [finding] })}\n`);
+        const refused = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/ordinary.json' });
+        expect(refused.success).toBe(false);
+        expect(refused.error).toContain('recurrenceAnalysis');
+
+        await writeFile(join(root, 'tmp', 'root-cause.json'), `${JSON.stringify({
+            findings: [finding],
+            recurrenceAnalysis: {
+                triggerClasses: ['comparison-unnamed'],
+                conclusion: 'instrument_unsound',
+                evidence: ['.kata/tasks/review-cli-io/review-rounds.jsonl:1-2'],
+                nextAction: 'repair',
+            },
+        })}\n`);
+        const recorded = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/root-cause.json' });
+        expect(recorded.success, JSON.stringify(recorded)).toBe(true);
+        const record = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { recurrenceAnalysis?: unknown };
+        expect(record.recurrenceAnalysis).toMatchObject({ conclusion: 'instrument_unsound', nextAction: 'repair' });
     });
 
     it('refuses a dangling symlink at the destination, which no existsSync check can see', async () => {

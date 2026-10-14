@@ -134,9 +134,10 @@
             "content-moved",
             "declaration-moved",
             "kind-moved",
+            "contract-moved",
             "unnameable"
           ],
-          "description": "Which comparison produced the verdict. The three are different facts and are kept apart rather than recorded as one with an empty list."
+          "description": "Which comparison produced the verdict. The four are different facts and are kept apart rather than recorded as one with an empty list."
         },
         "revisionId": {
           "type": "string",
@@ -225,6 +226,16 @@
           "type": "string",
           "minLength": 1,
           "description": "For `unnameable`: why no path could be named \u2014 a revision that recorded no path kinds, or a move invisible to both comparisons."
+        },
+        "frozenContractHash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For `contract-moved`: the acceptance contract the revision froze."
+        },
+        "taskContractHash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For `contract-moved`: the acceptance contract the task carries now, after the amendment."
         }
       },
       "oneOf": [
@@ -359,6 +370,49 @@
               {
                 "required": [
                   "removed"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "description": "The acceptance contract was amended after the seal: the revision froze one contract and the task carries another. Both hashes are required, because the contract is one value and there is no path to name.",
+          "required": [
+            "kind",
+            "revisionId",
+            "frozenContractHash",
+            "taskContractHash"
+          ],
+          "properties": {
+            "kind": {
+              "const": "contract-moved"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "differingPaths"
+                ]
+              },
+              {
+                "required": [
+                  "kindChanges"
+                ]
+              },
+              {
+                "required": [
+                  "added"
+                ]
+              },
+              {
+                "required": [
+                  "removed"
+                ]
+              },
+              {
+                "required": [
+                  "reason"
                 ]
               }
             ]

@@ -104,10 +104,12 @@ export function repairOwnerFor(scope: RepairScope | undefined): 'build' | undefi
 /**
  * Which comparison produced a drift verdict, and its two sides.
  *
- * **Two states, two comparisons, and the union keeps them apart.** A revised declaration and revised content are different
- * facts: `content-moved` names the declared paths whose own digests differ, `declaration-moved` names the paths the task
- * declares and the revision does not carry (`added`) and the reverse (`removed`) — and in that second case the *manifest is
- * equal*, so an empty `differingPaths` is the truth rather than a gap. Measured by an independent round before this union
+ * **Three states, three comparisons, and the union keeps them apart.** A revised declaration, revised content and a corrected
+ * acceptance contract are different facts: `content-moved` names the declared paths whose own digests differ,
+ * `declaration-moved` names the paths the task declares and the revision does not carry (`added`) and the reverse
+ * (`removed`) — and in that second case the *manifest is equal*, so an empty `differingPaths` is the truth rather than a gap —
+ * and `contract-moved` names the two contract hashes, because the contract is one value and neither side of it is a file.
+ * Measured by an independent round before this union
  * existed: a `declaration-moved` state was recorded as `content-moved` with an empty path list, so the reviewer read "no path
  * changed" for a verdict whose actual comparison had been discarded.
  */
@@ -118,6 +120,17 @@ export type SupersededComparison =
       differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
       /** Present when the same move also changed a path's kind, so neither half is lost. */
       kindChanges?: Array<{ path: string; recorded: string | null; observed: string | null }>;
+    }
+  | {
+      /**
+       * The acceptance contract was amended after the seal: the revision froze one contract and the task now carries
+       * another. The comparison is the two hashes, because the contract is one value — a criterion's text lives in
+       * `task.json`, which no content digest covers, so there is no path to name and the honest payload is the pair.
+       */
+      kind: 'contract-moved';
+      revisionId: string;
+      frozenContractHash: string;
+      taskContractHash: string;
     }
   | {
       kind: 'declaration-moved';

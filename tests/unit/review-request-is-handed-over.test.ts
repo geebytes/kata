@@ -12,6 +12,7 @@ import { defaultPolicy } from '../../src/kernel/policy.js';
 import { makeEvidence, makeVerdict } from '../helpers/review.js';
 import type { Claim } from '../../src/kernel/types.js';
 
+import { appendReviewRound } from '../../src/quality/repair.js';
 /**
  * **The action the plan was missing.**
  *
@@ -211,6 +212,63 @@ describe('a review request is handed over and checked, rather than hoped for', (
         })]);
         const after = await verifyAgainstRequest({ root, changeId });
         expect(after.gaps).toEqual([]);
+    });
+
+    it('turns a class recurring inside its own repair into a root-cause packet, preserving the prior rounds it must explain', async () => {
+        await planned();
+        await appendReviewRound(root, changeId, {
+            at: '2026-10-11T00:00:00.000Z',
+            revisionId: 'revision-before-repair',
+            reviewedRevisionId: 'revision-before-repair',
+            manifestHash: 'a'.repeat(64),
+            blockingIds: ['R1-F1'],
+            blockingCount: 1,
+            findings: [{ id: 'R1-F1', severity: 'major', class: 'comparison-unnamed', origin: 'original' }],
+        });
+        await appendReviewRound(root, changeId, {
+            at: '2026-10-12T00:00:00.000Z',
+            revisionId: 'revision-after-repair',
+            reviewedRevisionId: 'revision-before-repair',
+            manifestHash: 'b'.repeat(64),
+            blockingIds: ['R2-F1'],
+            blockingCount: 1,
+            findings: [{ id: 'R2-F1', severity: 'major', class: 'comparison-unnamed', origin: 'repair' }],
+        });
+
+        const built = await buildReviewRequest({ root, changeId });
+        expect(built.ok).toBe(true);
+        if (!built.ok) return;
+        expect(built.request.recurrencePacket).toEqual({
+            version: 1,
+            mode: 'root_cause',
+            trigger: 'mechanizable_class_recurred_after_repair',
+            classes: [{
+                class: 'comparison-unnamed',
+                oracle: 'mechanizable',
+                repairOrigin: 1,
+                rounds: ['2026-10-11T00:00:00.000Z', '2026-10-12T00:00:00.000Z'],
+                findings: ['R1-F1', 'R2-F1'],
+            }],
+            rounds: [
+                {
+                    at: '2026-10-11T00:00:00.000Z',
+                    revisionId: 'revision-before-repair',
+                    reviewedRevisionId: 'revision-before-repair',
+                    findings: [{ id: 'R1-F1', severity: 'major', class: 'comparison-unnamed', origin: 'original' }],
+                },
+                {
+                    at: '2026-10-12T00:00:00.000Z',
+                    revisionId: 'revision-after-repair',
+                    reviewedRevisionId: 'revision-before-repair',
+                    findings: [{ id: 'R2-F1', severity: 'major', class: 'comparison-unnamed', origin: 'repair' }],
+                },
+            ],
+            sources: {
+                reviewRounds: `.kata/tasks/${changeId}/review-rounds.jsonl`,
+                reviewHistory: `.kata/tasks/${changeId}/review-history.jsonl`,
+                currentReview: `.kata/tasks/${changeId}/review.json`,
+            },
+        });
     });
 
     it('refuses a lower strength where the plan asked for a higher one', async () => {

@@ -424,6 +424,51 @@ export async function runTasksCommand(argv: string[]): Promise<Record<string, un
             record: 'declaration-changes.jsonl',
         };
     }
+    if (subcommand === 'amend-acceptance') {
+        // **The entry point whose absence made a false acceptance statement permanent.** A criterion is frozen at creation
+        // and every certification is *about* it, so a sentence the change has outgrown could only be corrected by editing
+        // `task.json` by hand — outside the lock, with no record of who decided it or why. Measured on a real change whose
+        // criterion asserted "the same predicate `cwd` already uses", which is true of neither of the two rules the code
+        // has: `ledger claim restate` corrected the claim and the criterion stayed false.
+        if (!args.task || !args.id || !args.file || !args.reason) {
+            throw new Error('Usage: kata-cli tasks amend-acceptance --change <task-id> --id <acceptance-id> --file <amendment.json> --reason "<why>" [--by <actor>] [--root <path>]');
+        }
+        const { amendAcceptance } = await import('../quality/acceptance-amendment.js');
+        // The pair travels in one file rather than as two flags, deliberately: the amendment is a compare-and-swap, and
+        // the text it expects to find is half the operation. A file is one artefact the operator can read before running,
+        // and it keeps a sentence full of quotes out of a shell.
+        const body = JSON.parse(await readFile(args.file, 'utf8')) as { expectedStatement?: unknown; statement?: unknown };
+        if (typeof body.expectedStatement !== 'string' || typeof body.statement !== 'string') {
+            throw new Error('Invalid amendment file: expected an object with `expectedStatement` (the text you believe is on disk) and `statement` (the correction).');
+        }
+        const result = await amendAcceptance({
+            root,
+            taskId: args.task,
+            acceptanceId: args.id,
+            expectedStatement: body.expectedStatement,
+            statement: body.statement,
+            reason: args.reason,
+            by: args.by ?? 'cli',
+        });
+        if (!result.ok) return { command: 'tasks amend-acceptance', ok: false, error: result.refused };
+        return {
+            command: 'tasks amend-acceptance',
+            ok: true,
+            taskId: args.task,
+            acceptanceId: args.id,
+            amendmentId: result.amendment.id,
+            previousStatement: result.amendment.previousStatement,
+            statement: result.amendment.statement,
+            voidedRevision: result.amendment.voidedRevision,
+            record: 'acceptance-amendments.jsonl',
+            // The remedy is the whole point of the void: a certification of the old contract cannot speak for the amended
+            // one, so the next step is a re-seal, which adopts it.
+            nextAction: {
+                cliCommand: `kata-cli build --change ${args.task} --seal`,
+                why: `revision ${result.amendment.voidedRevision} froze the previous contract, so it is no longer current; re-seal to certify the amended one`,
+            },
+        };
+    }
     if (subcommand === 'relate') {
         if (!args.from || !args.to || !args.type) {
             throw new Error('Usage: kata-cli tasks relate --from <task> --to <task> --type <superseded_by|covered_by|duplicate_of|merged_into|parent_of|spawned_from|related_to> [--reason <text>] [--root <path>]');
@@ -764,8 +809,10 @@ export function parseTasksArgs(argv: string[]): {
     field?: string;
     file?: string;
     by?: string;
+    /** The acceptance criterion an amendment is about (`tasks amend-acceptance`). */
+    id?: string;
 } {
-    const args: { from?: string; to?: string; task?: string; type?: string; reason?: string; root?: string; field?: string; file?: string; by?: string } = {};
+    const args: { from?: string; to?: string; task?: string; type?: string; reason?: string; root?: string; field?: string; file?: string; by?: string; id?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
         // R12-F13: both spellings and the flag-is-not-a-value guard, through the one reader.
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
@@ -784,6 +831,9 @@ export function parseTasksArgs(argv: string[]): {
             if (inline === undefined) index += 1;
         } else if (arg === '--file' && value !== undefined && !value.startsWith('--')) {
             args.file = value;
+            if (inline === undefined) index += 1;
+        } else if (arg === '--id' && value !== undefined && !value.startsWith('--')) {
+            args.id = value;
             if (inline === undefined) index += 1;
         } else if (arg === '--by' && value !== undefined && !value.startsWith('--')) {
             args.by = value;

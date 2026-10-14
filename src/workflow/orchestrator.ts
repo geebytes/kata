@@ -19,6 +19,7 @@ import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
 import { describeClaimFailure, evaluateClaims, resolveClaimChecks, validateClaims } from '../quality/claims.js';
 import { requireDefectClass } from '../quality/defect-classes.js';
+import { recurrencePacketOfReadable, validateRecurrenceAnalysis, type RecurrenceAnalysis } from '../quality/recurrence-packet.js';
 import { collectSealPreflight } from './seal-preflight.js';
 import { bindsToRevision, currentRevisionIdentity, currentRevisionIdentityFrom, revisionBindingFields } from './verdict-binding.js';
 import { dependencyRootsFor, matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
@@ -29,7 +30,7 @@ import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from '
 import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeBothOwnedDigests, computeContentDigests, computePathDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
-import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
+import { outOfScopeRepairPaths, repairScopePaths, readReviewRoundsState, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
 import { assertRepairBaselineStillCurrent, authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
@@ -43,7 +44,7 @@ import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate, validateArtefact } from '../core/schema.js';
 import { ensureWorkspaceHygiene } from '../core/layout.js';
-import { readTask, UnreadableTaskRecord } from '../core/task.js';
+import { acceptanceContractHashOf, readTask, UnreadableTaskRecord } from '../core/task.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
 import { buildChangeRecord, writeChangeRecord } from '../quality/change-record.js';
 import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
@@ -792,6 +793,9 @@ async function cmdBuild(
             taskId,
             ownedPaths,
             checkIds: checks.map((check) => check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`),
+            // **The contract the seal is certifying, frozen into the identity.** Read from the same task record the seal
+            // resolved its claims from, so the hash and the checks it justifies cannot come from two different reads.
+            acceptanceContractHash: acceptanceContractHashOf(task.acceptance, task.acceptanceMatrix),
             ...(ownershipConflicts.length > 0 && options.allowOwnershipConflicts
                 ? { ownershipConflicts, ownershipConflictsAcknowledged: true }
                 : {}),
@@ -1675,11 +1679,22 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             }
             let findings: ReviewFinding[];
             let declaredCoverage: string[] | null = null;
+            let recurrenceAnalysis: RecurrenceAnalysis | undefined;
             // The findings that arrived with no defect class: recorded anyway (a payload written before the field existed must
             // still record) and reported on the record, so the absence is measured rather than silent.
             const findingsWithoutClass: string[] = [];
             try {
-                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown };
+                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown; recurrenceAnalysis?: unknown };
+                const recurrencePacket = recurrencePacketOfReadable(await readReviewRoundsState(root, taskId), {
+                    reviewRounds: `.kata/tasks/${taskId}/review-rounds.jsonl`,
+                    reviewHistory: `.kata/tasks/${taskId}/review-history.jsonl`,
+                    currentReview: `.kata/tasks/${taskId}/review.json`,
+                });
+                if (recurrencePacket !== null) {
+                    const checked = validateRecurrenceAnalysis(result.recurrenceAnalysis, recurrencePacket);
+                    if (!checked.ok) throw new Error(checked.why);
+                    recurrenceAnalysis = checked.analysis;
+                }
                 if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
                 // **The vocabulary is checked before the schema, so the refusal names the word.** The schema refuses an
                 // unknown spelling too, but its message lists the legal values without saying which one was rejected — an
@@ -1967,7 +1982,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     root,
                     taskId,
                     recordPath,
-                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(findingsWithoutClass.length > 0 ? { findingsWithoutClass } : {}), ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(findingsWithoutClass.length > 0 ? { findingsWithoutClass } : {}), ...(declaredCoverage === null ? {} : { declaredCoverage }), ...(recurrenceAnalysis === undefined ? {} : { recurrenceAnalysis }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
                     lock,
                 );
             });
@@ -2783,6 +2798,10 @@ function supersededReadiness(
                 : { kind: 'unnameable' as const, revisionId: status.revisionId, reason: status.comparisonUnavailable ?? 'no declared path differs' }
             : status.status === 'declaration-moved'
             ? { kind: 'declaration-moved' as const, revisionId, added: status.added, removed: status.removed }
+            // The third comparison, carried for the same reason the other two are: a verdict that says only
+            // `revision_superseded` names no fact, and the contract is not a file an operator can diff for themselves.
+            : status.status === 'contract-moved'
+            ? { kind: 'contract-moved' as const, revisionId, frozenContractHash: status.frozenContractHash, taskContractHash: status.taskContractHash }
             : undefined,
         acceptance: acceptance.map((criterion) => ({
             id: criterion.id ?? '',

@@ -157,6 +157,9 @@ describe('every workflow node declares its input, output and interaction', () =>
             // and it is the tier whose floor moved, so a reader could not learn the new rule from the guidance.
             expect(rendered).toContain('no tier asks Kata for a sandbox');
             expect(rendered).toMatch(/assurance floor is `observed` under `strict` \*\*and\*\* under/);
+            expect(rendered).toContain('## Recurrence circuit breaker');
+            expect(rendered).toContain('recurrencePacket');
+            expect(rendered).toContain('root-cause conclusion');
         }
     });
 });

@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { hashContent } from './hash.js';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appendStateEvent, writeCurrentState, type Phase, type StateRecord } from './state.js';
@@ -350,4 +351,21 @@ export async function writeTaskClassification(root: string, taskId: string, valu
     }
     return `${JSON.stringify(record, null, 2)}\n`;
   });
+}
+
+/**
+ * **The acceptance contract as one value: the criteria and the matrix, which is what a certification is about.**
+ *
+ * This is the hash a revision freezes, so a contract that has since been amended is detectable the same way moved content
+ * is — and it is deliberately the *same* serialization the candidate freeze has used since the freeze existed
+ * (`review-ir.ts`), extracted here rather than restated there: two hashes of one contract would be two answers to "did the
+ * contract move", and the one the gate never reads is the one that would be wrong.
+ *
+ * The argument is the pair rather than the task so a caller that has already read the record does not re-read it.
+ */
+export function acceptanceContractHashOf(
+    acceptance: AcceptanceCriterion[] | undefined,
+    matrix: AcceptanceMatrix | undefined,
+): string {
+    return hashContent(JSON.stringify({ acceptance, matrix: matrix ?? null }));
 }

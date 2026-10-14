@@ -16,6 +16,10 @@ The protocol is not here.** Read `.agents/skills/kata-review/SKILL.md` first —
 
 A **ReviewRequest**, as your payload, and nothing else — no author-written brief. It carries the claims, each one's reading set, the evidence each requires, a deadline, and the questions you are asked. A question the request did not hand you is not yours to answer: it asks about content the request deliberately does not speak for.
 
+If the payload includes `recurrencePacket`, it has activated a different review mode. Follow the **Recurrence circuit breaker** section in `.agents/skills/kata-review/SKILL.md`: reconstruct the recorded history before ordinary certification work, and return the required `recurrenceAnalysis`. This is a pointer to the single protocol source, not a second copy of that protocol.
+
+The request also carries `reviewPackage.declaration.acceptanceAmendments`. When it is a non-empty list, an acceptance criterion was **corrected after the seal** (`kata-cli tasks amend-acceptance`), and the correction is part of what you are reviewing: the entry names the old text, the new text, the reason, the actor and the revision whose certification the correction voided. Judge the correction itself — whether it narrows what the change must do, moves the bar to match the implementation instead of the implementation to match the bar, or merely restates the same claim — rather than only the corrected sentence. When it reads `{ unreadable }`, that is a named hole: say so rather than assuming the contract was never corrected.
+
 ## What this file owns
 
 Your **tool surface** — `read`, `grep`, `find`, `ls`, `bash`. The shell is not a convenience: a review is decided by *measurement*, and every reading it rests on comes from running something — the declared check, the change that has to falsify it, and the state of the checkout afterwards. A definition without a shell can only read other people's claims about those runs, which is how a round becomes a summary instead of a check.

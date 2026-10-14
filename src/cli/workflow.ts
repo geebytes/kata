@@ -44,7 +44,7 @@ import { type KataCommand } from '../workflow/orchestrator.js';
 import { validateMatrix, validateWaivers, type Waiver } from '../quality/acceptance-matrix.js';
 import { classifyLaneAndDeclaration, laneBelowSentence, parseAgentClassification, taskClassificationRecord } from '../quality/classification.js';
 import { defaultPolicy } from '../kernel/policy.js';
-import { writeTaskClassification, type AcceptanceMatrix, type ClaimDeclaration, type UpstreamCoverage } from '../core/task.js';
+import { readTaskClassification, writeTaskClassification, type AcceptanceMatrix, type ClaimDeclaration, type UpstreamCoverage } from '../core/task.js';
 import { type Role as HandoffRole } from '../workflow/handoff.js';
 import { argValue, flagPresent, paradeArgValue, parseChangeArg, readFlag, switchPresent } from './invocation.js';
 export { flagPresent } from './invocation.js';
@@ -67,6 +67,58 @@ export function isResumableWorkflowCommand(command: string): boolean {
     return ['design', 'build', 'review', 'judge', 'verify', 'archive'].includes(command);
 }
 
+
+
+type ClassificationTaskRecord = {
+    ownedPaths?: string[];
+    workflowProfile?: { reviewMode?: string };
+};
+
+async function deriveTaskClassification(
+    root: string,
+    taskId: string,
+    agentClassification?: ReturnType<typeof parseAgentClassification>,
+): Promise<{ record: ReturnType<typeof taskClassificationRecord>; diagnostics: Record<string, unknown> }> {
+    const task = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'task.json'), 'utf8')) as ClassificationTaskRecord;
+    const answer = classifyLaneAndDeclaration({
+        paths: task.ownedPaths ?? [],
+        policy: defaultPolicy(),
+        ...(task.workflowProfile?.reviewMode === undefined ? {} : { reviewMode: task.workflowProfile.reviewMode }),
+        ...(agentClassification ? { agentClassification } : {}),
+    });
+    const record = taskClassificationRecord({ taskId, paths: task.ownedPaths ?? [], answer });
+    return {
+        record,
+        diagnostics: {
+            classification: {
+                tier: answer.classification.tier,
+                floor: answer.classification.floor,
+                matched: answer.classification.matched,
+                riskClasses: answer.classification.riskClasses,
+                wideChange: answer.classification.wideChange,
+                reason: answer.classification.reason,
+            },
+            classificationRecord: record,
+            lane: answer.lane,
+            laneTier: answer.laneTier,
+            laneBelow: answer.laneBelow,
+            ...(answer.laneBelow
+                ? { laneBelowNote: laneBelowSentence({ changeId: taskId, lane: answer.lane, laneTier: answer.laneTier, classification: answer.classification }) }
+                : {}),
+        },
+    };
+}
+
+/** Derive and attach the classification missing from a pre-classification task. */
+export async function runTaskClassificationCommand(change: string, root: string, argv: string[] = []): Promise<Record<string, unknown>> {
+    const existing = await readTaskClassification(root, change);
+    if (existing.kind === 'usable') throw new Error(`Task ${change} already has a classification; classify only repairs a missing legacy record.`);
+    if (existing.kind === 'unreadable') throw new Error(`Task ${change} has an unreadable classification; classify will not overwrite it.`);
+    const agentClassification = await readClassificationFile(argv);
+    const derived = await deriveTaskClassification(root, change, agentClassification);
+    await writeTaskClassification(root, change, derived.record);
+    return { command: 'classify', taskId: change, success: true, classification: derived.record, diagnostics: derived.diagnostics };
+}
 export async function runWorkflowCommand(command: KataCommand, change: string, root: string, platform?: string, argv: string[] = []): Promise<Record<string, unknown>> {
     const waivers = command === 'build' ? await readWaiversFile(argv) : undefined;
     const inputPhase = await readWorkflowPhase(root, change);
@@ -182,35 +234,9 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     let classificationDiagnostics: Record<string, unknown> | undefined;
     if (result.success && (command === 'open' || command === 'hotfix' || command === 'tweak')) {
         try {
-            const record = JSON.parse(await readFile(join(root, '.kata', 'tasks', result.taskId, 'task.json'), 'utf8')) as {
-                ownedPaths?: string[];
-                workflowProfile?: { reviewMode?: string };
-            };
-            const answer = classifyLaneAndDeclaration({
-                paths: record.ownedPaths ?? [],
-                policy: defaultPolicy(),
-                ...(record.workflowProfile?.reviewMode === undefined ? {} : { reviewMode: record.workflowProfile.reviewMode }),
-                ...(agentClassification ? { agentClassification } : {}),
-            });
-            const classification = taskClassificationRecord({ taskId: result.taskId, paths: record.ownedPaths ?? [], answer });
-            await writeTaskClassification(root, result.taskId, classification);
-            classificationDiagnostics = {
-                classification: {
-                    tier: answer.classification.tier,
-                    floor: answer.classification.floor,
-                    matched: answer.classification.matched,
-                    riskClasses: answer.classification.riskClasses,
-                    wideChange: answer.classification.wideChange,
-                    reason: answer.classification.reason,
-                },
-                classificationRecord: classification,
-                lane: answer.lane,
-                laneTier: answer.laneTier,
-                laneBelow: answer.laneBelow,
-                ...(answer.laneBelow
-                    ? { laneBelowNote: laneBelowSentence({ changeId: result.taskId, lane: answer.lane, laneTier: answer.laneTier, classification: answer.classification }) }
-                    : {}),
-            };
+            const derived = await deriveTaskClassification(root, result.taskId, agentClassification);
+            await writeTaskClassification(root, result.taskId, derived.record);
+            classificationDiagnostics = derived.diagnostics;
         } catch (error) {
             // **A lane report that cannot be computed is reported, not omitted.** The declaration here would be "the two facts
             // were never compared", which is the state this exists to remove.

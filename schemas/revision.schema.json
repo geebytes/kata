@@ -32,6 +32,11 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "acceptanceContractHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The acceptance contract (criteria and matrix) this revision froze, as one hash. Absent on revisions sealed before the field existed — and `tasks amend-acceptance` refuses to amend under such a revision, because a revision that records no contract cannot report `contract-moved` and its certification would survive the correction it is supposed to lose."
+    },
     "pathDigests": {
       "type": "object",
       "description": "Per-path content digests of the owned set at seal time, so a later pass can ask what changed. Absent on revisions sealed before the field existed (delta_unavailable).",
