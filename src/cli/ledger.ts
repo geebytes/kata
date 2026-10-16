@@ -16,6 +16,7 @@ import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
 import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, evidenceWriteConflict, evidenceSetConflict, replaceEvidence, replaceOneEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
+import { reviewRequestPath } from '../core/layout.js';
 import { ledgerTierForDeclaredPaths, ledgerVerdict, tierOverrideFromPlan } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
@@ -1529,7 +1530,18 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 return;
             }
         }
-        emit({ ok: true, command: 'ledger run', request: built.request, ...(out ? { out } : {}) });
+        // **The brief is persisted as well as handed over, and the persistence is what makes the round checkable.** The
+        // result echoes `requestId`, and the check compares that echo against *this* document — not against a kind re-derived
+        // when the answer arrives, which is a comparison between the answer and the state of the world rather than between the
+        // answer and the question. A brief that lived only in `--out` could not be compared against anything, so a round that
+        // correctly answered what it was handed was refused the moment the content moved while it read.
+        try {
+            await writeFile(reviewRequestPath(options.root, changeId), `${JSON.stringify(built.request, null, 2)}\n`, 'utf8');
+        } catch (error) {
+            fail({ command: 'ledger run', error: `cannot persist the ReviewRequest at ${join('.kata', 'tasks', changeId, 'review-request.json')}: ${(error as Error).message}` });
+            return;
+        }
+        emit({ ok: true, command: 'ledger run', request: built.request, ...(out ? { out } : {}), brief: join('.kata', 'tasks', changeId, 'review-request.json') });
         return;
     }
 

@@ -7,6 +7,8 @@ import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
 import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
+import { readLoopState } from '../quality/repair-lineage.js';
+import { readReviewRoundsState } from '../quality/repair.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
 import { readBlockingProblems } from './review-read.js';
@@ -333,8 +335,13 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // authorizable, but does not manufacture an unbound measurement that a later revision could misinterpret.
     if (revision) {
         const committed = await commitReviewDecision(root, taskId, snapshot, async (lock) => {
+            // **The row names the activity that produced these findings**, derived from the chain and the history the same way
+            // the request and the result derive it. Without it a history of eight rounds reads as eight certifications, which is
+            // what it was — the reading the loop measurement needs to say the loop was never scoped to converge.
+            const entryKind = (await readLoopState({ root, taskId, currentRevisionId: revision.id })).kind;
             await appendReviewRound(root, taskId, {
                 at: new Date().toISOString(),
+                kind: entryKind,
                 revisionId: revision.id,
                 manifestHash: revision.manifestHash,
                 blockingIds: reviewBlockingProblems.map((problem) => problem.id),

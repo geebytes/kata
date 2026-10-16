@@ -42,6 +42,15 @@ export interface LoopReplay {
     judgmentShare: number;
     /** The classes that came back inside a repair: the stop-line signal this loop is measured by. */
     stopLineCandidates: string[];
+    /**
+     * **What kind of round each row was, counted — the reading that says whether the loop was ever scoped to converge.**
+     *
+     * A `certification` round owns the whole revision; a `focused_followup` verifies the previous round's repair batch and
+     * its dependency cone; a `root_cause` round owes a closure contract instead of another certification. Eight rounds all
+     * counted as certifications is a loop that paid eight times for the widest possible review, and `undeclared` counts the
+     * rows written before the field existed rather than attributing them to a kind the reader would have preferred.
+     */
+    roundsByKind: { certification: number; focused_followup: number; root_cause: number; undeclared: number };
     discovery:
         | { identified: false; reason: string }
         | { identified: true; findingsPerRound: number | null; /** `null` when no recorded round had a numeric count: a rate over an empty set is not zero, it is unmeasured. */ blockingPerRound: number | null; roundsForHalfRate: number | null };
@@ -91,6 +100,15 @@ export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
 
     const share = (part: number, whole: number): number => (whole === 0 ? 0 : Number((part / whole).toFixed(4)));
 
+    // **The kind of every row, and the default is `undeclared` rather than the kind this loop would rather have seen.** A row
+    // whose `kind` is absent or names something outside the vocabulary is a row nobody can attribute, which is a fact about
+    // the history; counting it as a certification would make an unattributed history read as a fully-scoped one.
+    const roundsByKind = { certification: 0, focused_followup: 0, root_cause: 0, undeclared: 0 };
+    for (const round of rounds) {
+        if (round.kind === 'certification' || round.kind === 'focused_followup' || round.kind === 'root_cause') roundsByKind[round.kind] += 1;
+        else roundsByKind.undeclared += 1;
+    }
+
     return {
         rounds: rounds.length,
         findings: findings.length,
@@ -104,6 +122,7 @@ export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
         mechanizableRoundShare: share(mechanizableRounds.length, withFindings.length),
         repairOriginShare: share(repairOrigin.length, classified.length),
         judgmentShare: share(judgment.length, classified.length),
+        roundsByKind,
         stopLineCandidates: classRecurrence(rounds).filter((entry) => entry.stopLineCandidate).map((entry) => entry.class),
         discovery:
             rounds.length < IDENTIFIABLE_ROUNDS

@@ -52,6 +52,29 @@
       "minLength": 1,
       "description": "The revision this round actually reviewed, when that is not the revision it is recorded against. The binding fields describe the content the record is bound to; this names the revision the round was opened against, so a round recorded after the content moved can be told apart from one that answered the content in hand. Absent on records written before the field existed, which is history that cannot claim either."
     },
+    "recordedAt": {
+      "description": "When this conclusion was recorded, stamped by the writer. It is what orders the conclusion against the rounds after it: \"the declared repair did not hold\" is decidable only as \"the class recurred *after* this moment, on a later revision of the chain\", and without a recorded time every declaration would be either permanently due or permanently not.",
+      "type": "string",
+      "minLength": 1
+    },
+    "requestId": {
+      "description": "Which dispatched brief this result answered. Recorded so the round's scope is durable: the brief names the activity, the revision and the batch, and a record that names only its own revision cannot be told from one that answered a different question about the same content.",
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewKind": {
+      "description": "Which of the three review activities this round was dispatched as (derived, never chosen): 'certification' owns the whole sealed revision; 'focused_followup' verifies the previous round's repair batch and its dependency cone; 'root_cause' produces the closure contract for a recurring defect class instead of another certification. Recorded so a round's scope is readable from the record it produced.",
+      "type": "string",
+      "enum": [
+        "certification",
+        "focused_followup",
+        "root_cause"
+      ]
+    },
+    "reviewKindUndeclared": {
+      "description": "The payload did not name a review kind, so the kind was recorded from the request that dispatched it. Present so an omission is a measured fact on the record rather than a silent default; a payload naming a kind other than the derived one is refused, not filed.",
+      "type": "boolean"
+    },
     "subjectRevision": {
       "type": "string",
       "minLength": 1,
@@ -73,6 +96,34 @@
       "type": "array",
       "items": {
         "$ref": "https://kata.dev/schemas/review-finding.schema.json"
+      }
+    },
+    "batchClosure": {
+      "description": "A focused follow-up's answer to the repair batch it was handed: one entry per finding the brief listed, each saying whether it is closed and on what evidence. Required when the dispatched brief carried a repairBatch, because a batch nobody answers is a batch nobody closed - and the round that re-found a neighbour of the previous repair every time is exactly what goes unnoticed when silence counts as success.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findingId",
+          "verdict"
+        ],
+        "properties": {
+          "findingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "enum": [
+              "closed",
+              "open"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "reviewRoute": {
@@ -144,29 +195,116 @@
     "recurrenceAnalysis": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["triggerClasses", "conclusion", "evidence", "nextAction"],
+      "required": [
+        "triggerClasses",
+        "conclusion",
+        "evidence",
+        "nextAction"
+      ],
       "properties": {
         "triggerClasses": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "The recurring defect classes the round was asked to explain, named as the packet named them."
         },
         "conclusion": {
-          "enum": ["behaviour_defect", "instrument_unsound", "claim_scope_error", "workflow_routing_error", "not_same_class"],
+          "enum": [
+            "behaviour_defect",
+            "instrument_unsound",
+            "claim_scope_error",
+            "workflow_routing_error",
+            "not_same_class"
+          ],
           "description": "The single root cause the round concluded, from a closed vocabulary so a later reader can compare two rounds rather than two essays."
         },
         "evidence": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "The concrete records and source references that separate this conclusion from the alternatives it was asked to rule out."
         },
         "nextAction": {
-          "enum": ["repair", "restate_claim", "resume_certification"],
+          "enum": [
+            "repair",
+            "restate_claim",
+            "resume_certification"
+          ],
           "description": "What the conclusion permits next. Paired with the conclusion by the validator, because a root cause that asks for the wrong next step is how a loop keeps buying rounds: behaviour_defect, instrument_unsound and workflow_routing_error require repair, claim_scope_error requires restate_claim, not_same_class requires resume_certification."
+        },
+        "closureObligation": {
+          "description": "The class-level closure the next repair is contracted to, required whenever nextAction is repair. Without it a root-cause round can conclude 'instrument_unsound, repair' and the next Build is still free to widen the same enumeration one call site at a time - which is the loop the packet exists to break. Refused when nextAction is not repair: an obligation on a round that is not repairing contracts a repair that will not happen.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "states",
+            "sourceOfTruth",
+            "inventory",
+            "invariant",
+            "repairSurface",
+            "effectivenessTest",
+            "ifRecursAgain"
+          ],
+          "properties": {
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "The defect class decomposed into the finite states it can be in, so the next repair has an enumeration to close instead of a site to patch."
+            },
+            "sourceOfTruth": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The one symbol every producer and consumer must derive the fact from. Two symbols is the defect, not the repair."
+            },
+            "inventory": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "Every producer, consumer, writer and reader of that fact that exists today, named so a later round can check the repair touched all of them."
+            },
+            "invariant": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The sentence that must hold at every site in the inventory once the repair has landed."
+            },
+            "repairSurface": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "The paths the class-level repair has to touch."
+            },
+            "effectivenessTest": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The check that reddens while any site in the inventory still violates the invariant, so 'it is fixed' is decided by running something rather than by the repair's own prose."
+            },
+            "ifRecursAgain": {
+              "enum": [
+                "rewrite_mechanism",
+                "waive_with_owner",
+                "abandon_change"
+              ],
+              "description": "The exit the owner takes if this class recurs inside a repair again. All of them are terminal, and none of them is another repair - the point of writing the contract down is that recurrence has a named consequence instead of a ninth round."
+            }
+          }
         }
       },
-      "description": "The durable root-cause conclusion of a round that was dispatched as a recurrence round (`recurrencePacket` present on the request). Recorded because the whole point of the packet is that the next reader can see what the previous round concluded — a conclusion that lives only in a transcript is the finding that vanishes (I-22) one layer up."
+      "description": "The durable root-cause conclusion of a round that was dispatched as a recurrence round (`recurrencePacket` present on the request). Recorded because the whole point of the packet is that the next reader can see what the previous round concluded \u2014 a conclusion that lives only in a transcript is the finding that vanishes (I-22) one layer up."
     }
   }
 }

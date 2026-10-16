@@ -27,10 +27,15 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeBothOwnedDigests, computeContentDigests, computePathDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
+import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeBothOwnedDigests, computeContentDigests, computePathDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, readCurrentTaskRevisionState, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, readReviewRoundsState, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
+import { classOccurrences, readRepairDeclarations } from '../quality/repair-declarations.js';
+import { isJsonRecord, readRecordState } from '../core/record-read.js';
+import { checkObligations, obligationsForSeal, type ObligationCheck } from '../quality/obligation-check.js';
+import type { RecurrencePacket } from '../quality/recurrence-packet.js';
+import { deriveReviewKind, readLoopState, readRepairLineage, type ReviewKind } from '../quality/repair-lineage.js';
 import { assertRepairBaselineStillCurrent, authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
@@ -42,12 +47,12 @@ import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.j
 import { isCurrentAssuranceLevel, READABLE_SEVERITIES } from '../kernel/types.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
-import { readValidated, readValidatedOptional, validate, validateArtefact } from '../core/schema.js';
+import { readValidated, readValidatedOptional, validate, validateArtefact, violationsOf } from '../core/schema.js';
 import { ensureWorkspaceHygiene } from '../core/layout.js';
 import { acceptanceContractHashOf, readTask, UnreadableTaskRecord } from '../core/task.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
 import { buildChangeRecord, writeChangeRecord } from '../quality/change-record.js';
-import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
+import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, reviewRequestPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
 
 export type KataCommand = 'open' | 'design' | 'build' | 'review' | 'judge' | 'verify' | 'archive' | 'hotfix' | 'tweak';
 
@@ -803,6 +808,26 @@ async function cmdBuild(
         : undefined;
     const revision = sealed?.revision;
 
+    // **The closure obligations this seal is contracted to, read before anything is reused.** Two reasons for the position.
+    // The check itself needs the evidence, so it runs after the checks do — but a fully-reused check set would return early
+    // and never meet it, and the one repair this contract exists for is the one that changed nothing: "the repair touched
+    // none of its declared surface" is exactly the state whose seal is all green. So the fast path below is refused while an
+    // obligation is open, and the run happens for real.
+    // **Deliberately unscoped, and the asymmetry with the exit decision is the point.** The exit decision ends the change, so it
+    // must not be triggered by another lineage's conclusion and is scoped to the chain in hand. A seal refuses to proceed and
+    // names the remedy, so the permissive direction here would be to skip the contract — and scoping the read to the chain is
+    // exactly how it gets skipped: a refused seal has already minted its revision but has not written the change record that
+    // would put that revision on the chain, so the revision a retry is measured against is off-chain, the declaration about the
+    // content it replaced matches nothing, and the contract is met by a second attempt that does nothing. A declaration in this
+    // task's own record is this change's promise whichever revision it was written about.
+    const obligationDeclarations = await readRepairDeclarations(root, taskId);
+    const obligationRounds = await readReviewRoundsState(root, taskId);
+    const openObligations = revision && obligationDeclarations.kind === 'readable'
+        ? obligationsForSeal({
+            declarations: obligationDeclarations.declarations,
+            occurrences: obligationRounds.kind === 'readable' ? classOccurrences(obligationRounds.rounds) : [],
+        })
+        : [];
     // Reuse, per check, and say so (L1-01). The revision identity still gates the whole thing — same owned-path content,
     // same resolved check set — but *within* that identity a check is now reusable on its own record: it previously
     // passed, its recorded input fingerprint still matches, and it was declared against rows whose files are unchanged.
@@ -821,7 +846,11 @@ async function cmdBuild(
         const recorded = await readRecordedEvidence(root, taskId);
         const plan = planCheckReuse(checks, recorded);
         reusePlan = plan;
-        if (plan.reusable.length === checks.length && checks.length > 0) {
+        // **A reused check set is not an answer to an open closure contract.** Reuse means "this check passed before, on this
+        // content, and nothing it reads has changed" — which is a statement about the checks, not about whether the repair
+        // touched the surface it promised or whether its declared effectiveness test is a real, runnable check. A repair that
+        // changed nothing satisfies every reuse condition and fails the contract; it has to run.
+        if (plan.reusable.length === checks.length && checks.length > 0 && openObligations.length === 0) {
             return {
                 command: 'build',
                 taskId,
@@ -1038,8 +1067,53 @@ async function cmdBuild(
         }
     }
 
-    if (revision) {
-
+    // **The closure contract, checked against the work instead of against its own prose.**
+    //
+    // A root-cause round concludes `instrument_unsound` and owes seven named fields; the review validator refuses the
+    // conclusion without them, and until here nothing ever read them again — so a repair could declare one `sourceOfTruth`,
+    // fix one call site, declare an `effectivenessTest` and never run it, and seal. Measured on this line of work: five rounds,
+    // three classes, three sites, every round reporting itself as a class-level fix.
+    //
+    // `openObligations` was read before the checks ran — the reuse fast path has to know about it — so this is the comparison
+    // itself: the contract on one side, and what the seal has just measured on the other.
+    let obligationChecks: ObligationCheck[] = [];
+    if (revision && baseRevision && openObligations.length > 0) {
+        const movedPaths = ownedPaths.filter((path) => baseRevision.pathDigests?.[path] !== revision.pathDigests?.[path]);
+        // One read per distinct baseline revision, so a contract's own revision is compared with rather than the attempt that
+        // happened to precede it.
+        const baselineDigests = new Map<string, Record<string, string>>();
+        for (const obligationDeclaration of openObligations) {
+            const revisionId = obligationDeclaration.revisionId;
+            if (revisionId === undefined || baselineDigests.has(revisionId)) continue;
+            const read = await readTaskRevision(root, taskId, revisionId);
+            if (read?.pathDigests !== undefined) baselineDigests.set(revisionId, read.pathDigests);
+        }
+        obligationChecks = checkObligations({
+            root,
+            open: openObligations,
+            declaredPaths: ownedPaths,
+            evidence,
+            movedPaths,
+            baselineDigests,
+            currentDigests: revision.pathDigests ?? {},
+        });
+        const unmet = obligationChecks.flatMap((check) => check.unmet.map((detail) => `${check.defectClass}: ${detail}`));
+        if (unmet.length > 0) {
+            return {
+                command: 'build',
+                taskId,
+                phase: 'implement',
+                success: false,
+                error: `Seal blocked: the repair does not satisfy the closure contract a root-cause round contracted it to. ${unmet.join(' | ')}. `
+                    + 'The obligation is recorded in the review record of the round that asked for this repair; satisfy it, or record a new conclusion for the '
+                    + 'class (a new round through `kata-cli ledger run` and a recorded result) before sealing.',
+                diagnostics: {
+                    mode: 'seal',
+                    reason: 'closure_obligation_unmet',
+                    closureObligations: obligationChecks,
+                },
+            };
+        }
     }
     // C1: a successful seal is what ends a repair batch — its contract is one seal and one delta round per node per batch.
     // The base revision was stamped when the batch opened, so nothing here supplies one.
@@ -1097,6 +1171,11 @@ async function cmdBuild(
             ...(reusePlan
                 ? { reusedChecks: reusePlan.reusable.map((entry) => entry.checkId), invalidatedChecks: reusePlan.invalidated }
                 : {}),
+            // **What the closure contract was checked against, published on the passing path too.** A satisfied obligation is
+            // the fact that says this repair addressed the class rather than one site of it, and the four readings behind it are
+            // the evidence for that sentence — a claim in a seal report without them is the prose this mechanism exists to
+            // replace.
+            ...(obligationChecks.length > 0 ? { closureObligations: obligationChecks } : {}),
         },
     };
     } finally {
@@ -1652,6 +1731,24 @@ async function cmdVerify(
     };
 }
 
+/**
+ * The brief `ledger run` persists, as this command reads it back.
+ *
+ * Typed rather than narrowed field by field: `recurrencePacket` and `repairBatch` are documents the same pipeline wrote, and
+ * re-deriving their shape with casts here would make the read an assertion instead of a read.
+ */
+/** The sealed revision's id from a snapshot read, or `undefined` when there is none to name. */
+function revisionInHandId(read: Awaited<ReturnType<typeof readCurrentTaskRevisionState>>): string | undefined {
+    return read.kind === 'current' ? read.revision.id : undefined;
+}
+
+type DispatchedBrief = {
+    requestId?: string;
+    reviewKind?: string;
+    repairBatch?: { roundAt?: string; findings?: Array<{ id?: string }> };
+    recurrencePacket?: RecurrencePacket;
+};
+
 async function cmdReview(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
     try {
         const isApprove = options.approve === true;
@@ -1677,22 +1774,52 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             if (!resultPath) {
                 return { command: 'review', taskId, phase: 'review', success: false, error: `--result-file must stay inside the workspace: ${reviewResultFile}` };
             }
+            // **The brief that was dispatched, read before the result.** A result answers a question, and the question is
+            // the document `ledger run` persisted — not a value re-derived now. Read here because both the recurrence check
+            // and the identity check below need it, and because a brief read twice is a brief that can disagree with itself.
+            const briefRead = await readRecordState<DispatchedBrief>(reviewRequestPath(root, taskId));
+            const brief = briefRead.kind === 'usable' ? briefRead.value : null;
             let findings: ReviewFinding[];
             let declaredCoverage: string[] | null = null;
             let recurrenceAnalysis: RecurrenceAnalysis | undefined;
             // The findings that arrived with no defect class: recorded anyway (a payload written before the field existed must
             // still record) and reported on the record, so the absence is measured rather than silent.
             const findingsWithoutClass: string[] = [];
+            // **What kind of round the payload says it was.** Read here because the file is read here, and checked once the
+            // revision the round reviewed is known: the brief carries a `reviewKind` now, so a payload that answers a
+            // different activity than the one it was dispatched for answered a question nobody asked. An omitted field is
+            // recorded as undeclared rather than refused — a payload written before the field existed must still record —
+            // and the absence travels on the record instead of passing silently.
+            let declaredReviewKind: unknown;
+            let declaredRequestId: unknown;
+            let declaredBatchClosure: unknown;
+            let recurrencePacketFired = false;
             try {
-                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown; recurrenceAnalysis?: unknown };
-                const recurrencePacket = recurrencePacketOfReadable(await readReviewRoundsState(root, taskId), {
-                    reviewRounds: `.kata/tasks/${taskId}/review-rounds.jsonl`,
-                    reviewHistory: `.kata/tasks/${taskId}/review-history.jsonl`,
-                    currentReview: `.kata/tasks/${taskId}/review.json`,
-                });
+                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown; recurrenceAnalysis?: unknown; reviewKind?: unknown; requestId?: unknown };
+                declaredReviewKind = result.reviewKind;
+                declaredRequestId = result.requestId;
+                declaredBatchClosure = (result as { batchClosure?: unknown }).batchClosure;
+                // **The packet the round was asked about**, taken from the brief when there is one: a round is judged
+                // against the question it answered, and the loop's own current packet is only the fallback for a flow with no
+                // persisted brief (a hand-run result). Deriving it here instead was the same decision made twice with two
+                // answers — and the answer the code used demanded a root-cause conclusion from a round whose brief had not
+                // asked for one, because that derivation did not filter the classes earlier rounds had answered.
+                const briefPacket = brief?.recurrencePacket ?? null;
+                const fallbackSnapshot = await readReviewDecisionSnapshot(root, taskId);
+                const recurrencePacket = briefPacket ?? (await readLoopState({
+                    root,
+                    taskId,
+                    // **In hand, read through the snapshot factory.** A raw pointer read here is what
+                    // `review-decision-snapshot-inventory` forbids: this command has a snapshot, and a second reading of the
+                    // same non-atomic file can answer something else.
+                    currentRevisionId: revisionInHandId(fallbackSnapshot.revisionRead),
+                })).packet;
                 if (recurrencePacket !== null) {
+                    recurrencePacketFired = true;
                     const checked = validateRecurrenceAnalysis(result.recurrenceAnalysis, recurrencePacket);
-                    if (!checked.ok) throw new Error(checked.why);
+                    if (!checked.ok) {
+                        throw new Error(`the recurrenceAnalysis does not match the root-cause contract — ${checked.problems.length} problem(s): ${checked.problems.join('; ')}`);
+                    }
                     recurrenceAnalysis = checked.analysis;
                 }
                 if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
@@ -1714,6 +1841,15 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         continue;
                     }
                     requireDefectClass(raw.class, `finding ${String(raw?.id ?? '(unnamed)')}`);
+                }
+                // **All of them, before any of them is filed.** `validateArtefact` throws on the first element's first
+                // violation, so a result carrying eight findings and one wrong field was refused with one sentence and the
+                // round had to be resubmitted to learn the next — measured twice on one round here (an out-of-vocabulary
+                // recurrence conclusion, then a malformed `reproduction` object), each time discarding every finding the
+                // round had produced. The preflight lists every violation at once; only a clean result is typed and filed.
+                const findingViolations = violationsOf('review-finding', result.findings);
+                if (findingViolations.length > 0) {
+                    throw new Error(`the findings do not match the review-finding contract — ${findingViolations.length} problem(s): ${findingViolations.join('; ')}`);
                 }
                 findings = validateArtefact<ReviewFinding[]>('review-finding', result.findings);
                 const foreignFinding = findings.find((finding) => finding.taskId !== taskId);
@@ -1942,6 +2078,71 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const reviewedRevisionId = placeholder && typeof existing.record.revisionId === 'string'
                 ? existing.record.revisionId
                 : binding.revisionId ?? undefined;
+            // **The round must have answered the brief it was handed, and the brief is the one on disk.**
+            //
+            // The comparison is against the persisted request — the document `kata-cli ledger run` issued — and not against a kind
+            // re-derived from the state at this moment. Re-deriving compares the answer with the world *now*: a round that read the
+            // content for an hour and correctly echoed what it was handed was refused the moment the content moved, while a round
+            // that echoed nothing at all was stamped with whatever the state had become. Reading the brief makes the check what it
+            // claims to be — did this result answer this question — and it makes the answer durable, because the brief is a file.
+            //
+            // A workspace with no persisted brief (a hand-run result, or a change whose ledger was never issued a request) keeps
+            // the derivation below as its fallback, and records the omission: an absent request is a fact about the flow rather
+            // than a licence to skip the check.
+            const kindRounds = await readReviewRoundsState(root, taskId);
+            const expectedKind = brief !== null && typeof brief.reviewKind === 'string'
+                ? brief.reviewKind as ReviewKind
+                : deriveReviewKind({
+                    recurrencePacketFired,
+                    recurrenceAlreadyDeclared: false,
+                    lineage: reviewedRevisionId === undefined
+                        ? { kind: 'absent' as const }
+                        : await readRepairLineage(root, taskId, reviewedRevisionId),
+                    currentRevisionId: reviewedRevisionId ?? '',
+                    rounds: kindRounds.kind === 'readable' ? kindRounds.rounds : [],
+                });
+            if (brief !== null && typeof brief.requestId === 'string') {
+                if (typeof declaredRequestId !== 'string' || declaredRequestId !== brief.requestId) {
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: `this result does not answer the brief that was dispatched: the brief's requestId is ${brief.requestId} and the result says ${JSON.stringify(declaredRequestId ?? null)}. `
+                            + 'Echo the `requestId` (and the `reviewKind`) from the ReviewRequest you were handed. If the brief has since moved, dispatch a new one '
+                            + `(\`kata-cli ledger run --change ${taskId}\`) and answer that.`,
+                    };
+                }
+            }
+            if (declaredReviewKind !== undefined && declaredReviewKind !== expectedKind) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `this round was dispatched as a ${expectedKind} round, and the result says ${JSON.stringify(declaredReviewKind)}. `
+                        + 'The kind decides what the round is obliged to read: a certification owns the whole revision, a focused follow-up '
+                        + 'verifies the previous round\'s repair batch and its dependency cone, and a root-cause round produces the closure '
+                        + 'contract instead of another certification. Record the result under the activity it was briefed for, or re-derive '
+                        + 'the brief (`kata-cli ledger run --change ' + taskId + '`) if the state has moved.',
+                };
+            }
+            // **A follow-up owes a verdict for every finding it was sent to close.** The batch is the object the kind was missing, so
+            // the answer to it is read here: one entry per batch finding, each named `closed` (with the evidence that says so) or
+            // still `open`. A missing entry is refused rather than read as an omission — silence about a finding is how a repair
+            // batch is never actually closed while every round reports success.
+            const batchFindings = (brief?.repairBatch?.findings ?? [])
+                .map((finding) => finding?.id)
+                .filter((id): id is string => typeof id === 'string');
+            if (batchFindings.length > 0) {
+                const closure = Array.isArray(declaredBatchClosure) ? declaredBatchClosure as Array<{ findingId?: unknown; verdict?: unknown }> : [];
+                const named = new Set(closure.map((entry) => entry?.findingId).filter((id): id is string => typeof id === 'string'));
+                const unanswered = batchFindings.filter((id) => !named.has(id));
+                const badVerdict = closure.find((entry) => entry?.verdict !== 'closed' && entry?.verdict !== 'open');
+                if (unanswered.length > 0 || badVerdict !== undefined) {
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: unanswered.length > 0
+                            ? `this focused follow-up was handed ${batchFindings.length} finding(s) to close and answered for ${named.size}: ${unanswered.join(', ')}. `
+                                + 'Record a `batchClosure` entry for each one — `{ findingId, verdict: "closed" | "open", evidence }` — because a batch nobody answers is a batch nobody closed.'
+                            : `the batchClosure entry for ${JSON.stringify(badVerdict?.findingId ?? null)} must say verdict \"closed\" or \"open\"; ${JSON.stringify(badVerdict?.verdict ?? null)} is neither.`,
+                    };
+                }
+            }
             const recordPath = layoutReviewPath(root, taskId);
                     // **The conclusion being replaced is archived, not overwritten.** The release path lets a new round be
                     // recorded when the recorded one answered a different request; without this the earlier conclusion —
@@ -1982,7 +2183,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     root,
                     taskId,
                     recordPath,
-                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(findingsWithoutClass.length > 0 ? { findingsWithoutClass } : {}), ...(declaredCoverage === null ? {} : { declaredCoverage }), ...(recurrenceAnalysis === undefined ? {} : { recurrenceAnalysis }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), reviewKind: expectedKind, ...(declaredReviewKind === undefined ? { reviewKindUndeclared: true } : {}), findings, ...(findingsWithoutClass.length > 0 ? { findingsWithoutClass } : {}), ...(declaredCoverage === null ? {} : { declaredCoverage }), ...(recurrenceAnalysis === undefined ? {} : { recurrenceAnalysis }), ...(Array.isArray(declaredBatchClosure) && declaredBatchClosure.length > 0 ? { batchClosure: declaredBatchClosure } : {}), status: 'pending', reviewRoute: 'adversarial', recordedAt: new Date().toISOString(), ...(typeof declaredRequestId === 'string' ? { requestId: declaredRequestId } : {}) }, null, 2)}\n`,
                     lock,
                 );
             });
@@ -2316,8 +2517,21 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 // repair was entered, so an approval recorded nothing and the escalation read a history whose blocking count
                 // rose (2 → 4 → 6) and never fell — firing on this change the moment its review passed with no findings. `0` and
                 // `null` are now two facts: cleared, and nothing to measure.
+                // **The row says which activity it was**, derived from the record this approval concludes rather than from a
+                // caller's memory of the round: a record carrying a `recurrenceAnalysis` was a root-cause round, and one whose
+                // chain holds an earlier revision with recorded findings was the follow-up of a repair batch.
+                const approvalRevision = approvedReviewedRevisionId ?? approveBinding.revisionId;
+                // **The same derivation the request and the result used.** The row records which activity produced it, so a
+                // second assembly of "was this a follow-up or a certification" here would let the durable history disagree with
+                // the brief the round was actually handed — and `roundsByKind` is read as if it were that history.
+                const approvalKind: ReviewKind = (await readLoopState({
+                    root,
+                    taskId,
+                    currentRevisionId: approvalRevision,
+                })).kind;
                 await appendReviewRound(root, taskId, {
                     at: new Date().toISOString(),
+                    kind: approvalKind,
                     ...(approveBinding.revisionId ? { revisionId: approveBinding.revisionId } : {}),
                     ...(approveBinding.manifestHash ? { manifestHash: approveBinding.manifestHash } : {}),
                     ...(approvedReviewedRevisionId ? { reviewedRevisionId: approvedReviewedRevisionId } : {}),

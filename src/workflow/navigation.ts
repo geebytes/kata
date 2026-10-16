@@ -31,12 +31,29 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import { assessReviewLoop, classRecurrence, readReviewRoundsState, recurrenceAcrossRevisions, type ClassRecurrence, type ReviewLoopAssessment, type ReviewRecurrence } from '../quality/repair.js';
+import { lineageProgress, readRepairLineage } from '../quality/repair-lineage.js';
+import { classesWhoseExitIsDue, classOccurrences, readRepairDeclarations, type DueExit } from '../quality/repair-declarations.js';
+import { ESCALATION_EXITS } from '../quality/recurrence-packet.js';
 import { loopReplayOfReadable, type LoopReplay } from '../quality/loop-replay.js';
 import { isJsonRecord, readDirectoryState, readRecordState, usableOrNull } from '../core/record-read.js';
 
 
 type AcceptanceItem = { result?: string; repairScope?: string };
 type AcceptanceRecord = { acceptance?: AcceptanceItem[] };
+
+/**
+ * **The reasons that state a decision instead of a step.**
+ *
+ * One set, read twice: it decides `requiresUserConfirmation` and it decides whether the action publishes `escalationExits`.
+ * The two were separate hand-written disjunctions, and they had already drifted — the declared-repair escalation was added to
+ * one of them and not the other, so the route that exists to hand a person three terminal choices was marked machine-legal to
+ * continue while its own pause text promised a halt. A reason added to this set stops being able to drift.
+ */
+const ESCALATION_REASONS = new Set<NextActionReason>([
+  'escalate_review_without_progress',
+  'escalate_declared_repair_did_not_hold',
+  'review_loop_unmeasurable',
+]);
 
 /**
  * The status reader consumes `acceptance` immediately below. A JSON object is not necessarily a usable judge/verify
@@ -125,6 +142,59 @@ export type UpstreamSummary = {
   reviewLoopReplay?: LoopReplay | null;
   /** @deprecated Projection of `reviewLoop.stalled_current_rounds`; routing never reads it. */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: readonly string[]; unmeasurable?: boolean };
+  /**
+   * **The repair chain's own progress, and the reading that makes the stop line reachable.**
+   *
+   * `reviewLoop` is scoped to the current revision, so every repair resets it: a repair necessarily seals a new revision,
+   * the previous rounds become history about other content, and `noProgressRounds` starts again from zero. Measured on this
+   * repository: eight rounds, eight revisions, and the revision-scoped count never exceeded 1 — so the "three rounds
+   * without progress" escalation could not fire no matter how long the loop ran.
+   *
+   * This is the same arithmetic (`reviewProgress`, one derivation) over the rounds of the whole chain, where the chain is
+   * derived from the change records' own `baseRevisionId` links. It is a report for the operator and a route for the
+   * escalation; it is never a gate, and it says nothing about whether a piece of evidence still speaks for the current
+   * content — the revision keeps owning that question.
+   *
+   * Absent when the chain could not be read (`lineageUnreadable` carries that) and when the chain is a single revision,
+   * because a chain of one has no lineage to report.
+   */
+  reviewLineage?: {
+    revisions: string[];
+    rounds: number;
+    noProgressRounds: number;
+    unmeasuredRounds: number;
+    stalled: boolean;
+  };
+  /** Why the repair chain could not be read, when it could not be — its own fact, never folded into "no lineage". */
+  lineageUnreadable?: string;
+  /**
+   * **The classes whose declared repair has already been spent.**
+   *
+   * The recurrence packet names the class and (since the closure obligation landed) the exit the next repair commits to.
+   * Neither stops anything by itself: the round routes back to `repair`, and the repair seals a revision the next round is
+   * free to attack next door to. This is the other half — a class a round already concluded a repair for, which then
+   * **recurred after that conclusion was recorded, on a later revision of the chain**, has had its declared repair and it did
+   * not hold, so the exit the record named is due rather than another repair.
+   *
+   * The ordering is what makes this an exit rather than a self-fulfilling label. Without it, the declaration a root-cause
+   * round has just written is itself the recurrence it points at, and the repair it contracted can never be attempted.
+   *
+   * Absent when nothing was declared for a class that recurred afterwards, which is the ordinary case the packet exists for.
+   */
+  reviewExitDue?: DueExit[];
+  /**
+   * Classes whose exit could not be decided because the record cannot order the recurrence against the conclusion: the
+   * declaration carries no timestamp, or its revision is not on this chain.
+   *
+   * Reported rather than folded into "not due". Both readings are wrong in a way the operator cannot see — silence lets the
+   * loop run, and an assumed order spends an exit on evidence that does not name one — so the state a reader has to repair
+   * by hand is named instead.
+   */
+  reviewExitsUndecidable?: string[];
+  /** Why the declarations could not be read, when they could not be — never folded into "nothing was declared". */
+  declarationsUnreadable?: string;
+  /** Declarations naming no revision on this chain: counted, never dropped as if they had never been written. */
+  declarationsUnattributable?: number;
   /** @deprecated Projection of `reviewLoop.unreadable_round_history`; routing never reads it. */
   /**
    * Whether the review-round history could not be read.
@@ -201,6 +271,8 @@ export const nextActionReasons = [
   'continue_implementation',
   'design_intake_task',
   'escalate_review_without_progress',
+  // A class whose declared repair did not hold: the exit its own conclusion named is due, rather than the same repair again.
+  'escalate_declared_repair_did_not_hold',
   'review_loop_recurring',
   // The same recurrence counted by defect class: a mechanizable class that came back inside a repair, which is the shape
   // mechanization is supposed to end. Reported and routed, never a gate change.
@@ -279,6 +351,15 @@ export type NextAction = {
   modelOrPlatformSwitchAllowed: boolean;
   trustBoundary?: TrustBoundary;
   pauseInstruction?: string;
+  /**
+   * **The exits a terminal escalation offers, enumerated rather than described.**
+   *
+   * Present exactly on `escalate_review_without_progress`, the one action that states a decision instead of a step. It used
+   * to name another review round, so the "terminal" state restarted the loop it was reporting — which is why the loop could
+   * not end. The vocabulary is the reviewer's own (`ESCALATION_EXITS`, one definition, shared with the closure obligation a
+   * root-cause round owes), so the exits an escalation prints and the exit a repair contract commits to cannot drift apart.
+   */
+  escalationExits?: readonly string[];
   /**
    * The command that completes the step this action starts, when one command is not enough.
    *
@@ -371,6 +452,35 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
       : sealedRead,
     reviewRounds,
   });
+  // **The chain's own reading, taken beside the revision's.** The two answer different questions and only one of them can
+  // fire the stop line: the revision-scoped count restarts at every repair, and the chain-scoped one is what accumulates.
+  // A chain of one revision is not a lineage, so it is not published; an unreadable chain is its own fact, so it is named
+  // rather than reported as an absence.
+  const lineageRead = sealedRead.kind === 'current'
+    ? await readRepairLineage(root, taskId, sealedRead.revision.id)
+    : { kind: 'absent' as const };
+  // **Whether a declared repair has already been spent.** Read from the change's own review records — the archived rounds
+  // and the active one — so a conclusion survives the round that made it.
+  // The class view is derived once and read twice — by the summary that reports it and by the predicate that decides whether
+  // a declared repair has been spent — because a second derivation of "which classes recur" is the defect this repository
+  // names most often.
+  const classRecurrenceEntries = reviewRounds.kind === 'unreadable' ? null : classRecurrence(reviewRounds.rounds);
+  // **The same rounds read as occurrences, because the exit decision needs an order the aggregate cannot carry.** "This class
+  // came back" is not an exit; "it came back *after* a round concluded a repair for it, on a later revision of the chain" is.
+  const occurrences = reviewRounds.kind === 'readable' ? classOccurrences(reviewRounds.rounds) : [];
+  // **Oldest first, because the reader compares positions.** `revisionIds` is the walk order (newest first) and `chain` is
+  // chronological; handing the walk order to a comparison of chain positions makes "later" mean "earlier", and the exit then
+  // reads a recurrence on the repair as one before the declaration. Membership is the same set either way, which is exactly
+  // why the mistake would have survived a test that only asked *which* revisions were involved.
+  const chainOldestFirst = lineageRead.kind === 'usable' ? lineageRead.chain.map((link) => link.revisionId) : [];
+  const declarationsRead = await readRepairDeclarations(root, taskId, chainOldestFirst);
+  const exitAssessment = declarationsRead.kind === 'readable'
+    ? classesWhoseExitIsDue(declarationsRead.declarations, occurrences, chainOldestFirst)
+    : { due: [], undecidable: [] };
+  const exitDue = exitAssessment.due;
+  const lineage = lineageRead.kind === 'usable' && reviewRounds.kind === 'readable'
+    ? lineageProgress(lineageRead, reviewRounds.rounds)
+    : null;
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judgeRead = await readRecordState<AcceptanceRecord & { revisionId?: string; manifestHash?: string; result?: string; subjectRevision?: string }>(judgePath(root, taskId), isAcceptanceRecord);
   const rawJudge = mixedRevision
@@ -498,7 +608,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // never; a *class* that comes back inside a previous repair is the shape this loop keeps paying for (measured: seven of
     // ten findings in one change were defects in the previous round's repair, while no id repeated). Reported, never enforced:
     // the operator sees which class is being sampled again and decides.
-    reviewLoopClassRecurrence: reviewRounds.kind === 'unreadable' ? null : classRecurrence(reviewRounds.rounds),
+    reviewLoopClassRecurrence: classRecurrenceEntries,
     // The same rounds, reported rather than only counted: a rate is reported only when the history can identify one.
     reviewLoopReplay: loopReplayOfReadable(reviewRounds),
     ...(reviewLoop.kind === 'stalled_current_rounds' ? {
@@ -508,6 +618,27 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         blockingIds: reviewLoop.blockingIds,
       },
     } : {}),
+    // **The chain's reading, published where the revision's is.** Reported for the operator, and read by the one route that
+    // must not restart at every repair; a single-revision chain publishes nothing, because there is no lineage yet.
+    ...(lineage === null || lineage.singleRevision ? {} : {
+      reviewLineage: {
+        revisions: lineage.revisions,
+        rounds: lineage.progress.rounds,
+        noProgressRounds: lineage.progress.noProgressRounds,
+        unmeasuredRounds: lineage.progress.unmeasuredRounds,
+        stalled: lineage.progress.escalating,
+      },
+    }),
+    ...(lineageRead.kind === 'unreadable' ? { lineageUnreadable: lineageRead.detail } : {}),
+    // **The spent repair, published where the other readings are.** Names the class, the conclusion that asked for the
+    // repair, and the exit that conclusion declared, so the operator reads which round promised what.
+    ...(exitDue.length > 0 ? { reviewExitDue: exitDue } : {}),
+    // **The exits the mechanism could not decide, named rather than folded.** An unordered declaration is not "not due": it
+    // is a record the operator has to repair, and only naming it keeps the difference between "the repair is still owed" and
+    // "the record cannot say whether it was".
+    ...(exitAssessment.undecidable.length > 0 ? { reviewExitsUndecidable: exitAssessment.undecidable } : {}),
+    ...(declarationsRead.kind === 'unreadable' ? { declarationsUnreadable: declarationsRead.detail } : {}),
+    ...((declarationsRead.unattributable ?? 0) > 0 ? { declarationsUnattributable: declarationsRead.unattributable } : {}),
     // **Each refusal comes from its own read.** These two were projections of `reviewLoop.kind`, which answers one value —
     // so with the pointer and the round log both unreadable only one of them was ever published, and an operator repairing
     // the first would meet the second on the next command. Routing still reads the assessment (the pointer's route outranks
@@ -679,15 +810,46 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       case 'unmeasurable_current_rounds':
         return { nextSkill: '/kata-review', role: 'reviewer', reason: 'review_loop_unmeasurable', priority: 2280 };
       case 'stalled_current_rounds':
+        // **The end of the automatic loop, and the reason it is not another review round.**
+        //
+        // This used to return `/kata-review` with `escalate_review_without_progress` — a name that promised a decision and
+        // a route that bought another round. Measured: eight rounds, seventy hours, fifty-three findings, and every route
+        // through the escalation dispatched the ninth reviewer. The mechanism could not converge because its only terminal
+        // action was the action that restarted it.
+        //
+        // The line it now returns is the dispatcher's read-only status, so nothing continues automatically, and the exits
+        // are enumerated for the owner (`escalationExits`): rewrite the mechanism, waive with a named owner, or abandon the
+        // change. Which of the three is a human decision with consequences the mechanism cannot price, so the mechanism
+        // stops and says so.
         return {
-          nextSkill: '/kata-review',
-          role: 'reviewer',
+          nextSkill: '/kata',
+          role: 'dispatcher',
           reason: 'escalate_review_without_progress',
           priority: 2200,
         };
       default:
         break;
     }
+  }
+  // **The chain's stop line, which is the state the revision-scoped one cannot represent.**
+  //
+  // Because a repair seals a new revision, the rounds of the revision in hand are almost never more than one or two, and
+  // `reviewLoop` answers `no_current_rounds` or a `noProgressRounds` of 1 for a loop that has been recycling its own
+  // repairs for eight rounds. Measured on this repository: eight rounds, eight revision ids, and the revision-scoped count
+  // never reached the three the escalation needs — so the stop line existed and could not fire.
+  //
+  // The reading here is the same arithmetic over the whole chain, derived from the change records' own parent links, and
+  // it routes to the same terminal decision: nothing continues automatically, the owner picks one of the enumerated exits.
+  // It sits below the revision-scoped escalation (same route, more specific fact) and above the invalidating table for the
+  // same reason that one does: a loop that has stopped converging is a decision about the change, and no downstream repair
+  // is worth dispatching while the question it exists to answer is unanswered.
+  if (phase === 'review' && upstream.reviewLineage?.stalled) {
+    return {
+      nextSkill: '/kata',
+      role: 'dispatcher',
+      reason: 'escalate_review_without_progress',
+      priority: 2190,
+    };
   }
   // **Every state below invalidates the reports, so the table is consulted before them.** It holds the states the review
   // loop does not own (a record nobody can read, evidence from two revisions, a ledger nobody can read, a verify that failed
@@ -723,6 +885,20 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
   const ladderAdmitsRepair = upstream.blockingFindings > 0
     || (blockingSeverities.length > 1 && upstream.majorFindings > 0);
+  // **A declared repair that did not hold outranks repairing the class again.** The class route below sends the operator
+  // back to implementation, which is the right answer while the class has not yet been declared and contracted; once a round
+  // has concluded a repair for it and named the exit due on recurrence, buying that same repair again is the loop this whole
+  // mechanism exists to break. It sits with the escalation above rather than with the repair routes because the mechanism
+  // cannot price a rewrite against a waiver against abandoning the change, so it stops and says so.
+  if (phase === 'review' && (upstream.reviewExitDue?.length ?? 0) > 0) {
+    return {
+      nextSkill: '/kata',
+      role: 'dispatcher',
+      reason: 'escalate_declared_repair_did_not_hold',
+      priority: 2185 + (upstream.reviewExitDue?.length ?? 0),
+    };
+  }
+
   // **A class that came back inside a repair is reported, not merely published, where the ladder admits the repair.** The
   // first version of this published the class view on the upstream summary and acted on nothing — the "computed, nobody
   // reads it" shape this whole change exists to close, measured by an independent round. It sits above the id-based route
@@ -933,9 +1109,12 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
       : cliVerb ? `kata-cli ${cliVerb} --change ${taskId}${seal}` : `kata-cli status --change ${taskId}`,
     role,
     reason,
-    // The escalation is a decision, not a dispatch: it stops with or without a model trust boundary, because the next
-    // step is a person deciding whether to keep repairing, waive a problem, or stop the change.
-    requiresUserConfirmation: gate !== null || wikiClosure || reason === 'escalate_review_without_progress' || reason === 'review_loop_unmeasurable',
+    // **Every reason that states a decision rather than a step stops for a person.** Derived once, from the reasons
+    // themselves: the first version listed `escalate_review_without_progress` and forgot the declared-repair escalation the
+    // same session added, so the route whose whole purpose is "a human chooses rewrite / waive / abandon" was machine-legal to
+    // continue — and the pause text beside it claimed the opposite. A hand-written disjunction of reasons drifts from the
+    // reasons; a set cannot.
+    requiresUserConfirmation: gate !== null || wikiClosure || ESCALATION_REASONS.has(reason),
     modelOrPlatformSwitchAllowed: gate !== null,
     ...(gate ? { trustBoundary: gate } : {}),
     ...(gate ? { pauseInstruction: boundaryPromptFor(gate, promptLanguage()) } : {}),
@@ -953,6 +1132,19 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
         }
         : {}),
     ...(wikiClosure ? { pauseInstruction: '实现验证已通过；请决定本任务的知识闭环是 captured 还是 not_applicable，再重新执行 /kata-verify。' } : {}),
+    ...(ESCALATION_REASONS.has(reason)
+        ? {
+            escalationExits: [...ESCALATION_EXITS],
+            // **The stop carries its own instruction.** `requiresUserConfirmation` is true for this reason, so the surface
+            // halts either way; without a sentence the halt reads as a routing gap and the next reader dispatches the round
+            // the escalation exists to refuse. The exits are listed in the same order the constant holds them.
+            pauseInstruction: reason === 'escalate_declared_repair_did_not_hold'
+                // The specific case gets the specific sentence: a class a round already concluded a repair for came back, so
+                // the exit that round's own conclusion named is due. `status` carries the class names (`reviewExitDue`).
+                ? '审查循环已停线：某条缺陷类的"已声明返修"没有成立——记录里已有轮次对该类给出返修结论（`status` 的 `reviewExitDue` 列出类名、结论与它声明的出口），而它在本 revision 上仍是停线候选。不会自动进入任何 /kata-* 步骤。由人来选择出口：(1) 重写机制（新开 change，放弃在本机制上继续局部修补）；(2) 由具名 owner 接受残余风险并记录期限；(3) 终止或回退这个 change。'
+                : '审查循环已停线（当前 revision 的轮次无进展，或整条修复链跨 revision 无进展）。不会自动进入任何 /kata-* 步骤。由人来选择出口：(1) 重写机制（新开 change，放弃在本机制上继续局部修补）；(2) 由具名 owner 接受残余风险并记录期限；(3) 终止或回退这个 change。',
+        }
+        : {}),
   };
 }
 
@@ -980,6 +1172,7 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   satisfy_ledger_deficits: null,
   // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
   escalate_review_without_progress: null,
+  escalate_declared_repair_did_not_hold: null,
   review_loop_unmeasurable: null,
   // Not a model boundary either: it is a decision about the change, and the gates it passes through are unchanged.
   review_loop_recurring: null,

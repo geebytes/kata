@@ -27,7 +27,7 @@ async function sourceFiles(dir: string): Promise<string[]> {
 }
 
 /** Path helpers that resolve inside `.kata/tasks/<id>/`. A write to one of these is a write to governed state. */
-const TASK_STORE_HELPERS = ['taskPath(', 'repairPath(', 'reviewDir(', 'handoffPacketPath(', 'taskDir(', 'layoutTaskDir('];
+const TASK_STORE_HELPERS = ['taskPath(', 'repairPath(', 'reviewDir(', 'reviewRequestPath(', 'handoffPacketPath(', 'taskDir(', 'layoutTaskDir('];
 
 /**
  * The raw writes into the governed store that are deliberate, each with the reason.
@@ -38,6 +38,9 @@ const TASK_STORE_HELPERS = ['taskPath(', 'repairPath(', 'reviewDir(', 'handoffPa
  * module sharing a marker is refused below, so the key still identifies one site.
  */
 const RECORDED: Record<string, string> = {
+    "src/cli/ledger.ts|reviewRequestPath(":
+        'the dispatched brief, written once per `ledger run` before the round starts — a whole-document replace of a derived read-only artefact that gates nothing by itself, so there is no read-modify-write to serialise; the lock would protect nothing while making the cheap command expensive',
+
     "src/core/state.ts|repairPath(":
         'inside `withTaskLock` — the repair record is written by the repair-entry transition itself, so the lock is already held',
     "src/core/task.ts|'task.json'":

@@ -42,8 +42,13 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         // same assessment the router read, so there is one of it. (`reviewEscalation` still exists as a deprecated
         // projection for readers of older records — routing never reads it, so naming it here would send an operator to
         // the wrong field.)
-        zh: '当前 revision 的审查循环已停止推进：最近几轮修复都没有减少阻塞项，因此不再派 /kata-build。轮次数与仍未处置的问题记录在本 change status 的 reviewLoop 字段中；这需要人来决定：继续修复、豁免某个问题，或终止这个 change。',
-        en: 'The current revision review loop has stopped making progress: recent repairs did not reduce blocking problems, so /kata-build is no longer dispatched. The scoped rounds and open problems are recorded under reviewLoop; a person decides — keep repairing, waive a problem, or stop the change.',
+        // **The text no longer promises a build and no longer describes a step that will not happen.** It used to say
+        // "/kata-build is no longer dispatched" while the route named `/kata-review` — the same contradiction one field
+        // over, and the loop it produced ran eight rounds. The exits are named, both readings that can fire it are named
+        // (the revision's own count and the cross-revision chain), and nothing here describes an automatic next step,
+        // because there is none: the action is the dispatcher's read-only status.
+        zh: '审查循环已停线，不再自动派发任何修复或审查。触发它的可能是当前 revision 的轮次连续无进展（status 的 reviewLoop 字段），也可能是整条修复链跨 revision 都没有降低阻塞项（status 的 reviewLineage 字段，链由 change record 的 baseRevisionId 推导）。这需要人来决定，且只有三个出口：① 放弃在该机制上继续局部修补，改为重写机制（新开一个 change）；② 由具名 owner 接受残余风险并记录期限（waive）；③ 终止或回退这个 change。任何出口都不包含"再修一轮"。',
+        en: 'The review loop has stopped, and nothing is dispatched automatically — neither a repair nor another review. It fires either when the current revision\'s rounds stopped reducing blocking problems (status `reviewLoop`) or when the whole repair chain made no progress across revisions (status `reviewLineage`, a chain derived from the change records\' `baseRevisionId` links). A person decides, and there are exactly three exits: (1) stop patching this mechanism and rewrite it in a new change; (2) a named owner accepts the residual risk with a recorded expiry (waive); (3) abandon or revert the change. None of them is "repair it once more".',
     },
     repair_unreadable_current_revision: {
         // The two refusals the unified assessment introduced each need their own voice: the fallback line recommends

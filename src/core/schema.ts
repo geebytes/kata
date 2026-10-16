@@ -201,6 +201,36 @@ export function validateArtefact<T>(schemaName: string, value: unknown): T {
 }
 
 /**
+ * **Every violation, when the reader is a machine briefing a human to fix them.**
+ *
+ * `validate` and `validateArtefact` throw the first violation, which is right for a reader that refuses a file it must
+ * understand. It is wrong for the one place a *producer* is told how to correct its own output: a review result with two
+ * independent mistakes was refused with one message, so the round had to be resubmitted twice to learn both — and on the
+ * measured case, one out-of-vocabulary enum and one wrong sub-object shape each threw away a complete round's findings.
+ * A validator that costs a round per mistake is a validator that multiplies the loop it exists to shorten.
+ *
+ * Returns the rendered violations (empty when the value is valid), and never throws for invalidity: preflight is a report,
+ * and the caller decides whether to refuse.
+ */
+export function violationsOf(schemaName: string, value: unknown): string[] {
+  const elements: Array<{ element: unknown; prefix: string }> = Array.isArray(value)
+    ? value.map((element, index) => ({ element, prefix: `$[${index}]` }))
+    : [{ element: value, prefix: '' }];
+  const problems: string[] = [];
+  for (const { element, prefix } of elements) {
+    const check = compile(schemaName);
+    if (check(element)) continue;
+    for (const failure of (check.errors ?? []) as ErrorObject[]) {
+      const rendered = renderError(failure);
+      // The path inside an element's message is relative to the element, so the index is prefixed here rather than
+      // rewritten there: one place knows about the list, and it is this one (`validateArtefact`'s rule, reused).
+      problems.push(prefix === '' || !rendered.startsWith('$') ? (prefix === '' ? rendered : `${prefix}: ${rendered}`) : `${prefix}${rendered.slice(1)}`);
+    }
+  }
+  return problems;
+}
+
+/**
  * Reads a JSON artefact and validates it against its schema. Every failure names the artefact and the path, so a
  * drifted file is reported where it is read instead of surfacing later as a missing field in a decision.
  */

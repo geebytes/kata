@@ -189,6 +189,18 @@ export interface ReviewRound {
      * when its findings could not be read (see `appendReviewRound`'s caller in the repair entry).
      */
     findings?: RoundFinding[];
+    /**
+     * **Which review activity produced this row.**
+     *
+     * Written from the same derivation the request and the result used (`deriveReviewKind`), so the durable history says
+     * whether a round was a certification, a focused follow-up of the previous repair batch, or a root-cause round. Read by
+     * the loop measurement (`replayLoop` -> `roundsByKind`), which is what turns "eight rounds happened" into "eight rounds
+     * happened and not one of them was a follow-up" - the reading that says a loop was never scoped to converge.
+     *
+     * Optional because rows written before the field existed stay readable; those rows count as `undeclared`, which is what
+     * they are, rather than being attributed to the kind a reader would have preferred.
+     */
+    kind?: string;
     /** Why a round has no findings to record (an approval that measured zero, or a repair admitted for ledger deficits). */
     noFindings?: string;
     blockingIds: string[];
@@ -599,6 +611,7 @@ function isRoundRecord(value: unknown): value is {
     reviewedRevisionId?: unknown;
     findings?: unknown;
     noFindings?: unknown;
+    kind?: unknown;
 } {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     const record = value as Record<string, unknown>;
@@ -606,7 +619,8 @@ function isRoundRecord(value: unknown): value is {
         && Array.isArray(record.blockingIds)
         && (record.revisionId === undefined || typeof record.revisionId === 'string')
         && (record.manifestHash === undefined || typeof record.manifestHash === 'string')
-        && (record.reviewedRevisionId === undefined || typeof record.reviewedRevisionId === 'string');
+        && (record.reviewedRevisionId === undefined || typeof record.reviewedRevisionId === 'string')
+        && (record.kind === undefined || typeof record.kind === 'string');
 }
 
 export async function readReviewRoundsState(root: string, taskId: string): Promise<ReviewRoundsRead> {
@@ -648,6 +662,7 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
                 // here, and that is reported by its absence rather than filled in with a guess: a history that cannot be read
                 // is a worse outcome than an incomplete one.
                 ...(readableRoundFindings(parsed.findings).length > 0 ? { findings: readableRoundFindings(parsed.findings) } : {}),
+                ...(typeof parsed.kind === 'string' ? { kind: parsed.kind } : {}),
                 ...(typeof parsed.noFindings === 'string' ? { noFindings: parsed.noFindings } : {}),
             });
         } catch {

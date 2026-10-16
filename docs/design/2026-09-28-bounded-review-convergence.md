@@ -95,6 +95,13 @@ AC-2 要求的性质是单调：`std ⊆ strict ⊆ security`，且 `std` 严格
 
 **为什么 `N = 3` 而不是更小：** 首版取 3 是判断而非测量，因此写进常量并在输出里具名（`no_progress_rounds: 3`），不藏在逻辑里。
 
+**2026-10-16 修正：D4 的计数范围错了，因此这条终态此前不可达。** D4 写的是"从一个 change 已记录的**修复历史**推导"，而实现（`assessReviewLoop`，`src/quality/repair.ts`）把轮次**按当前 revision 过滤**——理由是"关于别的内容的轮次不是对这份内容的读数"，这条理由本身正确，但两者叠加后：每次返修都会封一个新 revision，于是计数器每轮归零。实测 `the-gates-can-be-repaired` 八轮、八个 revision id、`noProgressRounds` 从未超过 1 ⇒ **N=3 永远不会触发**，同时 D4 期望的终态又是 `/kata-review`（I-38），于是"检测到不收敛"的动作只是再买一轮。
+
+修正分两处，各自有能红的仪器：
+
+- **口径**：新增 `src/quality/repair-lineage.ts`。修复链由 change record 自身的 `revisionId`/`baseRevisionId` 派生（不新增字段，也就没有可漏写的字段），进度用**同一个** `reviewProgress` 在链的轮次上计算；`status.reviewLineage` 发布 `revisions / rounds / noProgressRounds / unmeasuredRounds / stalled`。revision 仍然只回答证据新鲜度，链回答收敛。链不可读是 `lineageUnreadable`，不与"没有链"同形；单 revision 的链不发布（没有收敛史可报）。
+- **终态**：链级与 revision 级的停线都返回 `/kata`（只读 status，不自动继续）并带 `escalationExits`（`rewrite_mechanism` / `waive_with_owner` / `abandon_change`）。`NO_PROGRESS_ROUNDS = 3` 的语义不变，只是现在数到的是链的轮次。
+
 ### D5 —— 明确不做（留给后续 change）
 
 - 不引入 MaterialManifest / citation digest 绑定。证据已经由 kata 自己重判（`src/producers/verifiers.ts`），契约比“引用冻结字节”更强；先做绑定会造出第二个判定来源。

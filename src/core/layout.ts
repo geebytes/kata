@@ -582,6 +582,17 @@ export function reviewPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'review.json');
 }
 
+/**
+ * The ReviewRequest last dispatched for this change, as `ledger run` wrote it.
+ *
+ * A brief is a file so a result can be checked against *the question that was asked* rather than against the state of the
+ * world when the answer arrives — the two differ whenever the content moves while a round reads, and a check that re-derives
+ * the answer's own premise cannot tell a stale question from a wrong answer.
+ */
+export function reviewRequestPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'review-request.json');
+}
+
 export function judgePath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'judge.json');
 }

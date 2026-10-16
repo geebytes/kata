@@ -276,6 +276,13 @@ open
 
 普通的“再看一点”、重复问题、同一 finding 的反复讨论不能扩张 scope。连续 RepairBatch 没有减少 merge-blocking finding、范围反复不能闭合或风险不可判定时，状态转 `escalation_required`。它是自动 review 的终点，不是继续派 reviewer 的入口。
 
+**2026-10-16 实现状态（这一节此前只有设计，没有机制）。** `escalation_required` 的语义现在由三处落地，并且各有一条能红的仪器：
+
+1. **终点是一个决定，不是一个技能。** `escalate_review_without_progress` 的路由从 `/kata-review` 改为 `/kata`（只读 status，不自动继续），`NextAction.escalationExits` 枚举三个出口：`rewrite_mechanism`（放弃在本机制上继续局部修补，新开 change）、`waive_with_owner`（具名 owner 接受残余风险并记录期限）、`abandon_change`。词表 `ESCALATION_EXITS` 与 recurrence round 欠下的 `closureObligation.ifRecursAgain` **同一处派生**，所以"升级时打印的出口"与"复发时承诺的后果"不会漂移。仪器：`tests/unit/review-loop-routing-contract.test.ts`。
+2. **计数口径修正：链，而不是单个 revision。** 本节写"连续 RepairBatch 没有减少"（跨 batch 累积），而实现只数**当前 revision** 的轮次 —— 每次返修都会封新 revision，于是这个计数每轮归零，实测 `noProgressRounds` 从未超过 1，N=3 永远不触发。现在 `status.reviewLineage` 由 change record 自身的 `revisionId`/`baseRevisionId` 派生整条修复链，用**同一个** `reviewProgress` 在链上计算；revision 仍然只负责"这份证据是否还代表当前内容"（证据新鲜度），链负责"这条修复链有没有在减少问题"（收敛）。仪器：`tests/unit/a-repair-chain-is-the-unit-of-convergence.test.ts`。
+3. **§8.4 的 focused delta review 变成了协议字段。** 此前每轮都是同一种审查请求，独立审查者对"重审这个 change"的合理默认是最宽那条，于是每轮都能在上一轮修复里再找到缺陷（实测 53 条 finding 里 51 条 `origin: repair`、分类 finding 中 98%）。现在 `ReviewRequest.reviewKind` ∈ `certification | focused_followup | root_cause` 由链与轮次历史**派生**，结果必须回声同一值，不同即拒绝并打印两个名字；轮次行记录 `kind`，`loopReplay.roundsByKind` 给出"八轮里没有一轮是 follow-up"这一读数。kind 决定的是**必须读什么**，不是**允许看见什么**：follow-up 范围内发现的 blocking/major 仍要上报。
+4. **`ifRecursAgain` 现在是一条规则，不是一句话。** `src/quality/repair-declarations.ts` 从 change 自己的 review 记录（归档轮 + 活动记录）派生"哪些类已经声明过返修"；某类的**最新**结论文档是返修类（`behaviour_defect`/`instrument_unsound`/`workflow_routing_error`）而它在本 revision 上**仍是停线候选** ⇒ `reviewExitDue` 发布，路由 `escalate_declared_repair_did_not_hold` 返回终局出口，**优先于**"再修这个类"的 `/kata-build`。`not_same_class` 清除该类而不是花掉它（该轮已经回答了"这是不是一个类"），`claim_scope_error` 从不承诺返修所以不算已花；历史不可读具名为 `declarationsUnreadable`，不与"从未声明"同形。这补上了本节最缺的一环：**声明过的返修如果没成立，本机制不再买第二次同样的返修**。仪器：`tests/unit/a-declared-repair-that-did-not-hold-is-terminal.test.ts`。
+
 ## 9. 审查通过条件
 
 ### 9.1 单个 Ticket 完成

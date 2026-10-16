@@ -183,6 +183,13 @@ Do this:
     only correct order, and the repository's status after each run is how you know the tree came back.
 12. **Name the revision you reviewed.** A result is recorded against the revision that was current when it was written, which
     is not necessarily the one you read. State, in the result itself, which revision your readings apply to.
+13. **Answer the activity you were dispatched for, and echo it.** The request carries `reviewKind`: `certification` owns the
+    whole sealed revision, `focused_followup` verifies the previous round's repair batch and its dependency cone, and
+    `root_cause` produces a closure contract instead of another certification. Repeat that value in the result. A result
+    naming a different kind is refused, because "I certified this change" is not an answer to "verify this repair batch", and
+    a round that widens itself back to the whole change is how a repair loop re-finds a defect in its own fix every round.
+    A blocking or major defect found outside a follow-up's scope is still reported — the kind decides what you are obliged to
+    read, not what you are allowed to see.
 
 ## Recurrence circuit breaker
 
@@ -192,7 +199,18 @@ When the ReviewRequest carries `recurrencePacket`, this is **not** an ordinary c
 2. Classify the recurrence before proposing another local repair: choose exactly one root-cause conclusion — a real behaviour defect, an unsound instrument, a claim whose subject exceeds what its evidence can decide, a workflow route that cannot execute, or a demonstrated non-recurrence. State the concrete record and source lines that distinguish that conclusion from the alternatives.
 3. If the cause is a real defect, instrument or route, report the **class-level** repair and the smallest counterexample. If it is claim scope, identify the narrower branch/derivation/value that the declared falsifier can actually decide. Do not expand the normal review surface or add another hand-written exception list merely to make this round pass.
 4. Return the normal structured findings plus a `recurrenceAnalysis` object containing the trigger classes, the root-cause conclusion, the supporting record references, and whether the next action is `repair`, `restate_claim`, or `resume_certification`. A result that omits a root-cause conclusion when the packet was present is incomplete.
-5. Do not recommend another ordinary certification round until the recorded root cause has been repaired or the packet has shown that the findings are not one class. The circuit breaker changes the *kind of review*, never the strict gate or the requirement to independently certify the resulting repair.
+5. **When the conclusion asks for `repair`, the round owes a `closureObligation`, and the next Build is contracted to it** —
+   `states` (the class decomposed into the finite states it can be in), `sourceOfTruth` (the one symbol every producer and
+   consumer must derive the fact from), `inventory` (every producer, consumer, writer and reader that exists today, so a later
+   round can check the repair touched all of them), `invariant` (the sentence that must hold at every site),
+   `repairSurface` (the paths the class-level repair has to touch), `effectivenessTest` (the check that reddens while any
+   site still violates the invariant) and `ifRecursAgain` (one of `rewrite_mechanism`, `waive_with_owner`,
+   `abandon_change` — the terminal exits, never another repair). A `repair` conclusion without it is refused, because a
+   labelled cause the next round is free to patch one call site at a time is the loop this packet exists to break. Attaching
+   the obligation to a conclusion that is not `repair` is refused too: it would contract a repair that will not happen.
+   Submit the whole result once: the validator names **every** problem it finds, not the first one.
+6. Do not recommend another ordinary certification round until the recorded root cause has been repaired or the packet has shown that the findings are not one class. The circuit breaker changes the *kind of review*, never the strict gate or the requirement to independently certify the resulting repair — but "independently certify the repair" is a **`focused_followup`**: verify the repair batch against the obligation above and its dependency cone. It is not a licence to re-review the whole change, which is how eight rounds here produced fifty-three findings and ninety-eight percent of them inside the previous round's repair.
+7. **Echo the request's `reviewKind`** in the result (`certification`, `focused_followup` or `root_cause`). The request derives it, the result must answer the activity it was dispatched for, and a result naming a different one is refused with both names printed.
 
 What the gate refuses, so the request can be satisfied rather than guessed at: an unreadable ledger is refused (written
 and unparseable is not the same fact as never written); a verdict outlives its content, so a declared path that moved

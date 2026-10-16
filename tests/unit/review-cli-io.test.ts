@@ -110,11 +110,17 @@ describe('review CLI I/O', () => {
         const request = JSON.parse(await readFile(join(root, 'tmp', 'request.json'), 'utf8')) as {
             changeId: string;
             subjectRevision: string;
+            reviewKind: string;
+            lineage?: unknown;
             claims: Array<{ claimId: string; readingSet: string[] }>;
         };
         expect(request.changeId).toBe(changeId);
         expect(request.claims[0]).toMatchObject({ claimId: 'C-1', readingSet: ['src/a.ts'] });
         expect(request.subjectRevision).toBe(revision);
+        // **The brief says which activity it is.** Nothing has been reviewed on this chain, so the derived kind is a
+        // certification — and no lineage is carried, because a chain of one revision has no convergence history to report.
+        expect(request.reviewKind).toBe('certification');
+        expect(request.lineage).toBeUndefined();
 
         // The `=` spelling is the same flag: G-5 fixed `--result-file` only, so `--out=path` was seen as given by one
         // check and read as absent by the shared reader, refusing the path it had just been handed.
@@ -359,6 +365,8 @@ describe('review CLI I/O', () => {
         expect(refused.success).toBe(false);
         expect(refused.error).toContain('recurrenceAnalysis');
 
+        // **A repair conclusion owes a closure contract**, so the accepted payload carries one: the whole point of the
+        // obligation is that the next Build is contracted to something checkable instead of to another local patch.
         await writeFile(join(root, 'tmp', 'root-cause.json'), `${JSON.stringify({
             findings: [finding],
             recurrenceAnalysis: {
@@ -366,12 +374,72 @@ describe('review CLI I/O', () => {
                 conclusion: 'instrument_unsound',
                 evidence: ['.kata/tasks/review-cli-io/review-rounds.jsonl:1-2'],
                 nextAction: 'repair',
+                closureObligation: {
+                    states: ['the class is decided per call site', 'the class is decided by one shared derivation'],
+                    sourceOfTruth: 'the one derivation the class is about',
+                    inventory: ['src/workflow/execution-sandbox.ts'],
+                    invariant: 'every site asks the same derivation',
+                    repairSurface: ['src/workflow/execution-sandbox.ts'],
+                    effectivenessTest: 'tests/unit/a-check-argument-is-not-rewritten-by-substring.test.ts',
+                    ifRecursAgain: 'rewrite_mechanism',
+                },
             },
         })}\n`);
         const recorded = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/root-cause.json' });
         expect(recorded.success, JSON.stringify(recorded)).toBe(true);
         const record = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { recurrenceAnalysis?: unknown };
         expect(record.recurrenceAnalysis).toMatchObject({ conclusion: 'instrument_unsound', nextAction: 'repair' });
+    });
+
+    it('refuses a result that answered a different review activity than the one it was briefed for', async () => {
+        await prepareRequest();
+        await writeCurrentState(root, {
+            taskId: changeId, phase: 'review', actor: { id: 'kata-reviewer', role: 'reviewer' }, updatedAt: '2026-10-12T00:00:00.000Z',
+        });
+        const finding = { id: 'R-1', taskId: changeId, severity: 'minor', message: 'a detail' };
+
+        // This chain has never been reviewed, so the request derives `certification`. A result that certifies nothing and
+        // instead claims to be the follow-up of a repair batch answered a question nobody asked — which is exactly how a
+        // round widens or narrows itself away from the scope it was dispatched with.
+        await writeFile(join(root, 'tmp', 'wrong-kind.json'), `${JSON.stringify({ reviewKind: 'focused_followup', findings: [finding] })}\n`);
+        const refused = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/wrong-kind.json' });
+        expect(refused.success).toBe(false);
+        expect(refused.error).toContain('dispatched as a certification round');
+        expect(refused.error).toContain('focused_followup');
+
+        // The same payload under the activity it was briefed for records, and the record carries the kind.
+        await writeFile(join(root, 'tmp', 'right-kind.json'), `${JSON.stringify({ reviewKind: 'certification', findings: [finding] })}\n`);
+        const recorded = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/right-kind.json' });
+        expect(recorded.success, JSON.stringify(recorded)).toBe(true);
+        const record = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { reviewKind?: string; reviewKindUndeclared?: boolean };
+        expect(record.reviewKind).toBe('certification');
+        expect(record.reviewKindUndeclared).toBeUndefined();
+    });
+
+    it('names every contract violation at once instead of costing a round per mistake', async () => {
+        await prepareRequest();
+        await writeCurrentState(root, {
+            taskId: changeId, phase: 'review', actor: { id: 'kata-reviewer', role: 'reviewer' }, updatedAt: '2026-10-12T00:00:00.000Z',
+        });
+        // Two independent mistakes in one payload, each in a different finding: the first is missing a required field, the
+        // second carries a property the contract does not define. `validateArtefact` threw on the first violation of the
+        // first element, so the round had to be resubmitted to learn the second — and every finding in the file was
+        // discarded both times.
+        await writeFile(join(root, 'tmp', 'two-problems.json'), `${JSON.stringify({
+            reviewKind: 'certification',
+            findings: [
+                { id: 'R-1', severity: 'minor', message: 'no taskId' },
+                { id: 'R-2', taskId: changeId, severity: 'major', acceptanceId: 'AC-1', message: 'an undefined property', invented: true },
+            ],
+        })}\n`);
+        const refused = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/two-problems.json' });
+
+        expect(refused.success).toBe(false);
+        // Both elements are named, with their indices, in one refusal: the missing field on the first and the undefined
+        // property on the second. A refusal naming only one of them is the defect this preflight exists to remove.
+        expect(refused.error).toContain('$[0].taskId is required');
+        expect(refused.error).toContain('$[1].invented is not allowed');
+        expect(refused.error).toContain('2 problem(s)');
     });
 
     it('refuses a dangling symlink at the destination, which no existsSync check can see', async () => {

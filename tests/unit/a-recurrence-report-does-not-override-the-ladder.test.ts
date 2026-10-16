@@ -497,7 +497,9 @@ describe('a recurrence report does not override the ladder', () => {
         const stalled = await fixtureWith({ reviewRecord: 'blocking-finding', stalledRounds: true });
         expect(stalled.summary.reviewLoop?.kind, 'the switch must own this state').toBe('stalled_current_rounds');
         expect(stalled.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
-        expect(suggestCandidateAction('review', stalled.summary)).toMatchObject({ nextSkill: '/kata-review', reason: 'escalate_review_without_progress' });
+        // Terminal, and that is the assertion: the state that says "the loop stopped making progress" may not route to the
+        // round that was making no progress. `escalate_review_without_progress` used to answer `/kata-review`.
+        expect(suggestCandidateAction('review', stalled.summary)).toMatchObject({ nextSkill: '/kata', reason: 'escalate_review_without_progress' });
 
         // (3) A state the invariants table owns: this entry's own route is one `kata-cli build` refuses for the same reason the
         //     recurrence routes' was refused — the entry admits a finding at the bar, a ledger deficit or a superseded seal, and

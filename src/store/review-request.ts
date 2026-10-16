@@ -22,17 +22,19 @@
  * request speaks for the ledger, and `ledger claim add` is the remedy, not a gap here), and probe answers are **not** checked —
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
 import { readTaskClassification, type TaskClassificationRecord } from '../core/task.js';
 import { loopReplayOfReadable, type LoopReplay } from '../quality/loop-replay.js';
 import { recurrencePacketOfReadable, type RecurrencePacket } from '../quality/recurrence-packet.js';
+import { deriveReviewKind, lineageProgress, readLoopState, readRepairLineage, type RepairBatch, type ReviewKind } from '../quality/repair-lineage.js';
 import { readReviewRoundsState } from '../quality/repair.js';
 import { planDigestOf, questionForComparison, declaredPaths, declaredSubjectRevision, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
-import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
+import { readCurrentTaskRevisionState, readTaskRevision, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
 import { ledgerTierForDeclaredPaths, tierOverrideFromPlan } from './verdict.js';
 import type { EvidenceType } from '../kernel/types.js';
 import { readTaskRelations } from '../core/relations.js';
@@ -57,9 +59,66 @@ export type ClaimRequest = {
     boundary?: string;
 };
 
+/**
+ * The batch a follow-up verifies, as the request carries it.
+ *
+ * `findings` is what the previous round recorded; `unmodifiedPaths` is what the repair between the two revisions did not
+ * touch, derived from the chain's own path digests. Together they are the scope statement the word `focused_followup` was
+ * missing.
+ */
+export type RepairBatchOnRequest = RepairBatch & {
+    /** The chain the batch belongs to, oldest first — the revisions whose convergence this round contributes to. */
+    scope: string[];
+    /** Declared paths whose content the repair did not change: read them only when a batch finding names them. */
+    unmodifiedPaths?: string[];
+};
 export type ReviewRequest = {
     version: 1;
     changeId: string;
+    /**
+     * **Which of the three review activities this round is, decided before dispatch rather than by the round's own brief.**
+     *
+     * The distinction is the one formal inspection has always drawn and this protocol did not carry: a `certification`
+     * reviews a sealed revision as a whole; a `focused_followup` verifies the previous round's repair batch and its
+     * dependency cone; a `root_cause` produces a corrective-action contract instead of an ordinary certification.
+     *
+     * Without the field every round was the same round. An independent reviewer cannot tell "verify what I fixed" from
+     * "review this change again", so the correct default for a careful reader is the wider one — and a round that
+     * re-reviews everything re-finds something in the repair, every time. Measured: eight rounds, fifty-three findings,
+     * ninety-eight percent of them inside the previous round's repair. Derived here (one derivation), echoed by the
+     * result, and recorded on the round row, so a round briefed as a follow-up cannot quietly widen itself.
+     */
+    reviewKind: ReviewKind;
+    /**
+     * **Which dispatched brief this round is answering.**
+     *
+     * Deterministic, derived from the facts that identify the brief (`changeId`, `subjectRevision`, `reviewKind`, the revision
+     * it speaks for, and the batch it follows up), and persisted beside the other task records when the brief is issued. The
+     * result must echo it, and the echo is compared against that persisted brief rather than against a value re-derived when
+     * the result arrives: re-deriving compares the answer with the state of the world *now*, so a round that correctly echoed
+     * what it was handed is refused whenever the content moved while it read, while a round that echoed nothing is stamped
+     * with whatever the state has since become. The same argument holds for the kind — "I certified this change" is not an
+     * answer to "verify this repair batch".
+     */
+    requestId: string;
+    /**
+     * The repair chain this round belongs to, when it is longer than the revision in hand.
+     *
+     * A revision is the unit of evidence freshness; the chain is the unit of convergence. Carried so the reviewer can see
+     * that the count it is asked not to reduce started before this revision — the fact the revision-scoped status cannot
+     * express, and the reason a stop line that only counted one revision never fired.
+     */
+    lineage?: { revisions: string[]; rounds: number; noProgressRounds: number; stalled: boolean };
+    /**
+     * **The batch a `focused_followup` is verifying, and what it does not have to re-open.**
+     *
+     * Present exactly when the kind is `focused_followup`. Without it the word carried no object: the round was told to verify
+     * a repair batch and handed no findings, no paths and no closing rule, so re-reading the whole change was the only
+     * defensible reading of the brief — and that is the behaviour the loop was stuck on. `unmodifiedPaths` is derived from the
+     * chain's own path digests, so "this round does not have to re-open these" is a measured fact rather than a request for
+     * trust.
+     */
+    repairBatch?: RepairBatchOnRequest;
     subjectRevision: string;
     tier: string;
     /** The one number the brief has always carried: derived from the recorded baseline, `null` when there is none. */
@@ -145,12 +204,52 @@ export async function buildReviewRequest(input: {
     // "this loop is recycling its own repairs" from "this class keeps turning up in the original code".
     // The same decision the summary asks, so the two cannot disagree about an absent history (R6-F5).
     const reviewRounds = await readReviewRoundsState(input.root, input.changeId);
-    const loopReplay = loopReplayOfReadable(reviewRounds);
-    const recurrencePacket = recurrencePacketOfReadable(reviewRounds, {
-        reviewRounds: `.kata/tasks/${input.changeId}/review-rounds.jsonl`,
-        reviewHistory: `.kata/tasks/${input.changeId}/review-history.jsonl`,
-        currentReview: `.kata/tasks/${input.changeId}/review.json`,
+    // **One read of the pointer, taken before anything that depends on it.** `input.sealedRead` is supplied by callers that
+    // have already read it; `ledger run` does not, so the reader here is the only one — and leaving the two paths apart meant
+    // the kind and the chain were derived from `undefined` on the route that actually dispatches a review (measured by the
+    // follow-up brief carrying an empty scope while its own batch named two revisions).
+    const sealedForRequest = input.sealedRead ?? await readCurrentTaskRevisionState(input.root, input.changeId);
+    const currentRevisionId = sealedForRequest.kind === 'current' ? sealedForRequest.revision.id : undefined;
+    // **The loop's state, read before the packet so the packet can be filtered by it.** The cleared classes decide whether a
+    // recurrence question is still open at all: the packet is derived from the whole round history, so a class a later round
+    // answered with `not_same_class` keeps being raised, and every round after that is dispatched as a root-cause round whose
+    // question was already answered — which is how `resume_certification` stayed unreachable while sitting in the vocabulary.
+    const loopState = await readLoopState({
+        root: input.root,
+        taskId: input.changeId,
+        currentRevisionId,
     });
+    const loopReplay = loopReplayOfReadable(reviewRounds);
+    // **The packet and the kind both come from the loop state, which read them once.** They are the same fact from two sides
+    // — "is a recurrence question open" and "what is this round obliged to read" — and computing either of them here from a
+    // second read of the same files is how a brief ends up demanding a conclusion its own kind does not ask for.
+    const recurrencePacket = loopState.packet;
+    const reviewKind: ReviewKind = loopState.kind;
+    const lineageForRequest = sealedForRequest.kind === 'current'
+        ? await readRepairLineage(input.root, input.changeId, sealedForRequest.revision.id)
+        : { kind: 'absent' as const };
+    const lineageMeasured = lineageForRequest.kind === 'usable'
+        && lineageForRequest.chain.length > 1
+        && reviewRounds.kind === 'readable'
+        ? lineageProgress(lineageForRequest, reviewRounds.rounds)
+        : null;
+    const lineageOnRequest = lineageMeasured === null ? undefined : {
+        revisions: lineageMeasured.revisions,
+        rounds: lineageMeasured.progress.rounds,
+        noProgressRounds: lineageMeasured.progress.noProgressRounds,
+        stalled: lineageMeasured.progress.escalating,
+    };
+    // **The batch a follow-up is verifying, carried instead of implied.** `focused_followup` was a word with no object: the
+    // round was told to verify a repair batch and given no findings, no paths and no closing rule, so re-reading everything
+    // was the only defensible reading of the brief. `unmodifiedPaths` is the other half — what this round does **not** have to
+    // re-open, derived from the chain's own path digests rather than declared by anyone.
+    const repairBatchOnRequest = loopState.batch === null
+        ? undefined
+        : {
+            ...loopState.batch,
+            scope: loopState.chain,
+            ...(await unchangedPathsFor(input.root, input.changeId, lineageForRequest, loopState.batch.revisionId)),
+        };
     // **The classification the round reviews, read from the change's own record.** A request that omitted it would ask a
     // reviewer to judge a lane they cannot see; one that reported a classification it was handed would report the caller's
     // belief. So it is read here, and an unreadable record is carried as a named hole rather than as an absence.
@@ -225,7 +324,7 @@ export async function buildReviewRequest(input: {
     }
     // The seal has to exist too: a request that speaks for content nobody sealed is a brief for a revision the workflow
     // has not accepted, and the reviewer's result could not bind to anything.
-    const sealed = input.sealedRead ?? await readCurrentTaskRevisionState(input.root, input.changeId);
+    const sealed = sealedForRequest;
     if (sealed.kind === 'unreadable') {
         return { ok: false, why: `the sealed revision cannot be read (${sealed.detail}); a request has to speak for the content under review` };
     }
@@ -308,6 +407,20 @@ export async function buildReviewRequest(input: {
         request: {
             version: 1,
             changeId: input.changeId,
+            reviewKind,
+            // **The identity of the brief being dispatched.** Computed here from the same facts the document is built from, so it
+            // names *this* request rather than whatever the state becomes while the round reads: the result echoes it, and the
+            // echo is checked against the brief persisted beside the task records — which is what makes "the round answered the
+            // question it was handed" a fact instead of a re-derivation.
+            requestId: requestIdOf({
+                changeId: input.changeId,
+                subjectRevision: declaredSubjectRevision(ledger) ?? ledger.subject.revision,
+                reviewKind,
+                revisionId: currentRevisionId,
+                batchRoundAt: repairBatchOnRequest?.roundAt,
+            }),
+            ...(lineageOnRequest === undefined ? {} : { lineage: lineageOnRequest }),
+            ...(repairBatchOnRequest === undefined ? {} : { repairBatch: repairBatchOnRequest }),
             subjectRevision: declaredSubjectRevision(ledger) ?? ledger.subject.revision,
             tier: tierResolution.tier,
             ...(declaredClasses.length > 0 ? { defectClasses: declaredClasses } : {}),
@@ -335,6 +448,59 @@ export async function buildReviewRequest(input: {
             ...(withheldProbes.length === 0 ? {} : { withheldProbes }),
             note: 'the reading set comes from the plan, the deadline from the recorded baseline, and the probes from the ledger; a request carries no platform, session or model, because those are the assurance axis and not a criterion',
         },
+    };
+}
+
+/**
+ * The identity a dispatched brief echoes back.
+ *
+ * Derived, so the same facts always produce the same id and a re-issue of the same brief is recognisable as that same brief. It
+ * is built from the facts that decide *what is being asked* — the change, the subject, the activity, the revision it speaks for,
+ * and the batch it follows up — and from nothing that moves while a round reads (git state, timing, wording), because an id that
+ * moved with the world would be a second clock rather than an identity.
+ */
+export function requestIdOf(input: {
+    changeId: string;
+    subjectRevision: string;
+    reviewKind: ReviewKind;
+    revisionId?: string;
+    batchRoundAt?: string;
+}): string {
+    const canonical = JSON.stringify([
+        input.changeId,
+        input.subjectRevision,
+        input.reviewKind,
+        input.revisionId ?? null,
+        input.batchRoundAt ?? null,
+    ]);
+    return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
+
+/**
+ * The declared paths a follow-up does not have to re-open: unchanged between the revision the batch was recorded against and
+ * the revision in hand.
+ *
+ * Absent rather than guessed when either revision cannot be read: an empty list would read as "everything changed", which is a
+ * stronger claim than the record supports.
+ */
+async function unchangedPathsFor(
+    root: string,
+    taskId: string,
+    lineage: { kind: string; chain?: Array<{ revisionId: string }> },
+    batchRevisionId: string | undefined,
+): Promise<{ unmodifiedPaths?: string[] }> {
+    if (batchRevisionId === undefined || lineage.kind !== 'usable') return {};
+    const current = lineage.chain?.at(-1)?.revisionId;
+    if (current === undefined || current === batchRevisionId) return {};
+    const [before, after] = await Promise.all([
+        readTaskRevision(root, taskId, batchRevisionId).catch(() => null),
+        readTaskRevision(root, taskId, current).catch(() => null),
+    ]);
+    if (before?.pathDigests === undefined || after?.pathDigests === undefined) return {};
+    return {
+        unmodifiedPaths: Object.keys(before.pathDigests)
+            .filter((path) => after.pathDigests?.[path] === before.pathDigests?.[path])
+            .sort(),
     };
 }
 
