@@ -193,7 +193,18 @@ Do this:
     only correct order, and the repository's status after each run is how you know the tree came back.
 12. **Name the revision you reviewed.** A result is recorded against the revision that was current when it was written, which
     is not necessarily the one you read. State, in the result itself, which revision your readings apply to.
-13. **Answer the activity you were dispatched for, and echo it.** The request carries `reviewKind`: `certification` owns the
+13. **Say what happened to each finding, when what happened is not "repair it now".** Every finding carries an optional
+    `disposition`; leaving it out means `open`, which is the ordinary case and needs nothing. Two values are for the
+    comments that are **not defects you are asking this change to repair**: `routed` — a real defect that belongs to another
+    change, which you name in `dispositionReason` — and `accepted` — a suggestion or a deliberate boundary rather than a
+    defect, which is what keeps a suggestion from spending a repair round. Both require `dispositionReason`, and `deferred`
+    (recorded, not being fixed here) requires it too. The entry **refuses** `deferred`, `accepted` or `routed` on a
+    `blocking` or `major` finding: for those severities the repair is the only way out, and the refusal says so. Nothing
+    here closes a finding — only `fixed` does that, and only the round that repaired it may claim it — so a `routed` or
+    `accepted` finding stays in the record and stays visible at the gate. Use them to say what you mean, not to make a
+    round pass: a defect reported as `accepted` is exactly the failure this vocabulary exists to prevent, and it is the one
+    an independent reviewer is most likely to catch.
+14. **Answer the activity you were dispatched for, and echo it.** The request carries `reviewKind`: `certification` owns the
     whole sealed revision, `focused_followup` verifies the previous round's repair batch and its dependency cone, and
     `root_cause` produces a closure contract instead of another certification. Repeat that value in the result. A result
     naming a different kind is refused, because "I certified this change" is not an answer to "verify this repair batch", and

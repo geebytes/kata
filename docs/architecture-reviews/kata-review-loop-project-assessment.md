@@ -662,3 +662,27 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **实测证据**：`tsc --noEmit` 退出 0；全量 **376 文件 / 2339 用例全绿**（本片新增 4 例）；`check:wiring` 既有 11 条不变。**反证**：关掉该分支 → 2 条用例转红（状态退回 `pending`、迁移后仍无法记录返回）。**端到端**：按打印的 road 迁移 → 图变 v2、边获得 id → 状态变成普通的 `pending`/`return_not_recorded`（road 为 `dependency record`）→ **执行该 road 后状态到 `ready_to_revalidate`**（即“返回真的能记录了”，这正是旧边状态存在的意义）。
 
 **剩余**：#10 §8.2 的 finding 反馈分类、#11 PDSA 试点；#7 已实测并有条件建议不改。
+
+## 28. #10 已实施：finding 处置的规则终于有执行者，reviewer 也终于知道词汇（2026-10-18）
+
+设计 §8.2 想要的两件事，此前**都没有**：①把“必须修的确认缺陷”与“非缺陷的建议”分开；②`routed`/`deferred`/`accepted` 不得冒充 `fixed`。
+
+**②其实早已实施**（`CLOSING_DISPOSITIONS = ['fixed']`、`isOpenFinding`，并有 `a-disposition-has-one-vocabulary` 守卫两套词汇一致），我的第 20 节审计在这一点上过宽。**①的缺口是真实的，而且比“缺词汇”更糟**：
+
+- 生命周期设计（`docs/design/2026-09-18-finding-lifecycle-…` §F1.3 与 §I1 失败表）明确写了规则：`blocking`/`major` **同时拒绝** `defer` 与 `accept`（“非 0 退出，消息指向必须修”）；`minor`/`note` 两者都允许，`deferred` 需要 `reason`；“用 `accept` 掩盖真缺陷”是被点名的失败模式。
+- 执行它的命令（`kata-cli findings defer|accept|carry`）**已随其路由被删除**，而替代它的 review result 路径**只校验 severity 与 class，从不校验 disposition**。
+- 结果：schema 记录了一套词汇、ladder 在读它、**没有任何执行者**；把一个 `blocking` finding 标成 `accepted` 且不给任何理由，是可达的——正是 §I1 点名的那件事。
+- 更根本的一层：**reviewer 的指令里从未出现 `disposition`**（`phase-guidance` 提到它的次数为 0），所以这条通道没有任何真实写入者。
+
+**实现（两半，都有反证）**：
+
+1. **规则一处**（`src/quality/finding-dispositions.ts` 的 `findingDispositionProblems`，**导入** ladder 的 `DISPOSITIONS` 而不是复制）：值不在词汇内 → 拒绝并**点名那个词**；`blocking`/`major` 的 `deferred`/`accepted`/`routed` → 拒绝并指向“必须在本 change 内修复”（理由不能解锁它）；`deferred`/`accepted`/`routed` 缺 `dispositionReason`（或只有空白）→ 拒绝；一次报**全部**问题，不报第一条。
+2. **接线在 finding 进入仓库的那一处**（`orchestrator` 的 review result 路径，紧邻既有的 severity/class 校验）：违约即**拒绝整轮并且不写记录**——不是“记下来加个注”。因为 finding 是从 payload 进来的，规则属于读 payload 的地方，任何后续写入路径都继承它。
+3. **reviewer 终于被告知**（`phase-guidence` 第 13 条，生成到 `.agents/skills/kata-review`）：`routed`=属于别的 change 的真缺陷（在 `dispositionReason` 里点名）／`accepted`=建议或有意边界而非缺陷／`deferred`=记录但此处不修；三者都要理由；`blocking`/`major` 三者一律**拒绝**；并且明说**没有任何值能关闭 finding**（只有 `fixed`，且只有修好它的那一轮可以声称）——所以 `routed`/`accepted` 仍然留在记录里、仍然在门禁可见。这一段明确写了“用它说出你的意思，不要用它让一轮通过”。
+
+**为什么允许 `accepted`（以及它的风险控制）**：这正是你此前选定的原则——“已确认且属于本切片的 finding 要在一批内完整处置，**只有真正非缺陷的建议**才标为 Optional”。风险是它变成卸责通道；控制有三条：`blocking`/`major` 完全不可用该值、理由必填且永久留在记录、`isOpenFinding` 仍把非 `fixed` 的值算作**未关闭**（因此 change record 的 openFindings 与 status 依旧列出它们）。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **378 文件 / 2347 用例全绿**（本片新增 8 例）；`check:wiring` 回到既有 11 条。**反证**：把接线换成空数组 → 2 条入口用例转红（拒绝消失、记录被写入）。**入口端到端**（真实 fixture + `runCommand('review', …, {reviewResultFile})`）：`major`+`accepted`+理由 → 拒绝且 `review.json` **不存在**；`deferred` 无理由 → 拒绝；同一 finding 补上 `dispositionReason` → 正常记录并回读出 `disposition: 'deferred'`。
+**过程中被仓库自己的守卫抓了一次**：我在新模块里顺手导出 `closesFinding` 却没有调用者，`check:wiring` 立刻把 findings 从 11 变成 12（“只在测试里活着”正是它抓的类别），于是删掉——`isOpenFinding`/`CLOSING_DISPOSITIONS` 保持 ladder 的唯一答案，本模块不对“什么算关闭”发表第二意见。
+
+**剩余**：#11 PDSA 试点（需要真实使用数据，不是代码工作）；#7 已实测并有条件建议不改。

@@ -48,6 +48,7 @@ import { isCurrentAssuranceLevel, READABLE_SEVERITIES } from '../kernel/types.js
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate, validateArtefact, violationsOf } from '../core/schema.js';
+import { findingDispositionProblems, type DisposableFinding } from '../quality/finding-dispositions.js';
 import { ensureWorkspaceHygiene } from '../core/layout.js';
 import { acceptanceContractHashOf, readTask, UnreadableTaskRecord } from '../core/task.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
@@ -1896,6 +1897,18 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         continue;
                     }
                     requireDefectClass(raw.class, `finding ${String(raw?.id ?? '(unnamed)')}`);
+                }
+                // **The disposition rules, checked where a finding enters the repository.**
+                //
+                // The command that used to enforce them (`kata-cli findings defer|accept|carry`) went with the route it belonged
+                // to, and this path validated each finding's severity and class and never its disposition — so
+                // `schemas/review-finding.schema.json` documented a vocabulary nothing checked, and the one shape the lifecycle
+                // design names as burying a real defect (a merge-blocking finding marked `accepted`, with no reason) was
+                // reachable. The rules live in one function so a second route that files findings inherits them rather than
+                // restating them.
+                const dispositionProblems = findingDispositionProblems(result.findings as DisposableFinding[]);
+                if (dispositionProblems.length > 0) {
+                    throw new Error(`the findings breach the disposition rules — ${dispositionProblems.length} problem(s): ${dispositionProblems.join('; ')}`);
                 }
                 // **All of them, before any of them is filed.** `validateArtefact` throws on the first element's first
                 // violation, so a result carrying eight findings and one wrong field was refused with one sentence and the
