@@ -110,6 +110,7 @@ const certified: CorrectiveFacts = {
     revisionId: 'rev-c',
     judgedPass: true,
     reviewedApproved: true,
+    touchesCertificationMachinery: [],
     integratedContentHash: 'hash-1',
 };
 const recordedReturn = {

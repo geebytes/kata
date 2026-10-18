@@ -6,6 +6,7 @@ import { withRepositoryArtefactLock } from '../core/locks.js';
 import { assertValidTaskId } from '../core/ids.js';
 import { computeManifestHash, readCurrentTaskRevisionState } from './revision.js';
 import { bindsToRevision, currentRevisionIdentityFrom, type VerdictBinding } from './verdict-binding.js';
+import { certificationSurfaceFor } from '../quality/certification-surface.js';
 
 /**
  * **The one decision about a task-to-task blocking edge, and the one gate every entry asks.**
@@ -72,6 +73,15 @@ export type CorrectiveFacts = {
      * (`bindsToRevision`), so "does this approval still speak for that content" has one answer in the repository.
      */
     reviewedApproved: boolean;
+    /**
+     * **The certification-surface entries this corrective action's certified content edits.**
+     *
+     * A change that modifies the machinery deciding whether it is certified cannot be its own evidence of soundness, and no
+     * independent evaluator exists to take that place — so its qualification is `undetermined`, which is what the design
+     * says and what this list is for (`src/quality/certification-surface.ts`). Read from the **certified revision's**
+     * owned paths, not from `task.json`: the frozen revision is the content that would be certified.
+     */
+    touchesCertificationMachinery: string[];
     /** The hash of the corrective revision's declared surface as it stands in *this* tree; `null` when it could not be hashed. */
     integratedContentHash: string | null;
 };
@@ -139,6 +149,19 @@ function reviewRoad(taskId: string): string {
     return `kata-cli review --change ${taskId} (after \`kata-cli ledger run --change ${taskId}\`)`;
 }
 
+/**
+ * The roads for a corrective action that edits the certifier.
+ *
+ * **Both are commands that exist and run**, because a refusal whose road cannot be walked is the defect this repository has
+ * paid for twice already. They are also the whole set: an independent evaluator that could verify the candidate's artifact
+ * is exactly what does not exist yet, so naming one here would be printing a road nobody can take. Separating the work and
+ * abandoning the change are what an operator can actually do today.
+ */
+function certifierRoad(taskId: string): string {
+    return `separate the certifier work into its own change (kata-cli scope change --change ${taskId} … and kata-cli scope apply), `
+        + `or stop this one: kata-cli completion stop --change ${taskId} --reason <why>`;
+}
+
 function recordRoad(taskId: string, edge: DependencyEdge): string | null {
     return edge.relationId === null
         ? null
@@ -197,6 +220,22 @@ export function decideTaskDependencies(input: {
                 reason: 'corrective_not_certified',
                 detail: `The corrective task '${edge.correctiveTaskId}' has no accepted revision yet, so it cannot have returned anything.`,
                 road: statusRoad(edge.correctiveTaskId),
+            }));
+            continue;
+        }
+        // **Asked before the records, because no record can answer it.** A corrective action that edits the modules judging
+        // it would be certified by a rule it wrote; its own PASS is then the only evidence the rule is sound, which is the
+        // self-certification this repository refuses at every other layer. `undetermined` — not `pending` — because the
+        // remedy is not more work by C: it is an independent evaluator, which does not exist yet, or separating the work.
+        if (facts.touchesCertificationMachinery.length > 0) {
+            everyEdgeRevalidated = false;
+            blockers.push(blocker({
+                edge,
+                state: 'undetermined',
+                reason: 'corrective_changes_the_certifier',
+                detail: `The corrective task '${edge.correctiveTaskId}' edits the machinery that decides whether it is certified `
+                    + `(${facts.touchesCertificationMachinery.join(', ')}), so its own records cannot be the evidence that the rules are sound.`,
+                road: certifierRoad(edge.correctiveTaskId),
             }));
             continue;
         }
@@ -457,6 +496,7 @@ async function readCorrectiveFacts(root: string, taskId: string): Promise<Correc
 
     return {
         taskId,
+        touchesCertificationMachinery: certificationSurfaceFor(revision?.ownedPaths ?? []).map((entry) => entry.path),
         taskReadState: state.kind === 'unreadable' ? 'unreadable' : state.kind === 'absent' ? 'absent' : 'usable',
         phase: state.kind === 'current' ? state.state.phase : null,
         revisionReadState: revisionRead.kind === 'unreadable' ? 'unreadable' : revisionRead.kind === 'absent' ? 'absent' : 'current',
@@ -549,6 +589,13 @@ export async function recordDependencyReturn(input: {
     const facts = await readCorrectiveFacts(root, edge.correctiveTaskId);
     if (facts.revisionId === null || facts.revisionReadState !== 'current') {
         throw new Error(`Cannot record a return for edge '${relationId}': the corrective task '${edge.correctiveTaskId}' has no readable accepted revision.`);
+    }
+    if (facts.touchesCertificationMachinery.length > 0) {
+        throw new Error(
+            `The corrective task '${edge.correctiveTaskId}' edits the machinery that decides whether it is certified `
+            + `(${facts.touchesCertificationMachinery.join(', ')}), so it cannot sign the receipt that unblocks '${input.taskId}'. `
+            + `Roads: ${certifierRoad(edge.correctiveTaskId)}.`,
+        );
     }
     if (!facts.reviewedApproved) {
         throw new Error(

@@ -553,3 +553,40 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **我的建议**：先做 B 的**可测最小版本**并把这份清单写进设计文档（作为被审对象，而不是藏在代码里），同时把“清单本身要有仪器”列为验收条件；等 CodeGraph 的候选发现（`discoverCodeGraphCandidates` 已有）能承担根集合推导时，再升级到 C。**但这属于改变门禁强度的策略选择，我等你选路线，不自己定。**
 
 **其余未实施**（第 20 节）：#1 `dependencyIdentity`、#5 `legacy-undetermined`、#8 跨记录“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。
+
+## 24. #4 已实施（路线 B）：认证器面清单与“认证器不能自证”（2026-10-18）
+
+**已按你选的 B 实施。** 一个纠正行动 C 若修改了判定它自己的机制，那么每个门读的都是候选写下的规则，C 自己的 PASS 就成了“规则正确”的唯一证据——本仓库在其它每一层都拒绝的自我认证。设计原文的处置是：**在没有独立评价器/受认可启动链时，C 的批准资格是 `undetermined`**。
+
+**规则**（`src/quality/certification-surface.ts` + `src/workflow/task-dependency.ts`）：
+
+- 面从 **C 的已认证 revision 的 ownedPaths** 读取（不是 `task.json`）——revision 才是会被认证的内容，事后改声明不能把自己挪出面。
+- 命中即 `undetermined`，reason `corrective_changes_the_certifier`，detail **点名模块**，road 给出**两条真实可跑的路**：把认证器改动拆成独立 change（`kata-cli scope change` / `scope apply`），或停掉这个 change（`kata-cli completion stop`）。**不打印**“找独立评价器”这种今天不存在的路——那正是我今天修过两次的缺陷。
+- `undetermined` 与 `pending` 一样拒绝 seal/verify/review/judge/archive；写回执的 `recordDependencyReturn` 同样拒绝。
+
+**清单（与代码同源，逐条给出理由）**
+
+| 路径 | 为什么在面上 |
+|---|---|
+| `src/quality/review-ladder.ts` | 决定哪些 finding 阻止批准，以及返修链是否终止 |
+| `src/workflow/distill-gates.ts` | 决定已批准的审查与 Judge 是否放行 |
+| `src/quality/obligation-check.ts` | 决定一轮写下的 closure 契约是否满足 |
+| `src/quality/acceptance-matrix.ts` | 决定 seal 需要哪些证据，以及决定能否替代它 |
+| `src/quality/change-record.ts` | 组装每个门都在读的记录 |
+| `src/workflow/verdict-binding.ts` | 决定一条裁定是否仍为其所判内容代言 |
+| `src/workflow/review-preflight.ts` | 决定简报能否被派发给 reviewer |
+| `src/store/review-request.ts` | 构造一轮要回答的简报（含绑定阅读面） |
+| `src/store/verdict.ts` | claim 是否被支持的**唯一**推导 |
+| `src/kernel/` | 证据内核：claim 评估与认证所依赖的 quorum 算术 |
+| `src/adapters/phase-guidance.ts` | 生成 review skill 文本，即它书写 reviewer 协议 |
+| `src/adapters/manifest.ts` | reviewer 入口的**源**（agent spec 与其正文，由 `kata-cli update` 渲染到各平台） |
+
+**为什么不用 `task.instruments[]`（路线 A 被否的实测理由）**：那是**任务自报**的词汇，而本仓库 30+ 个任务里**声明它的有 0 个**——按它实现，规则对现有任务恒为假，等于没有门；而且改认证器的 C 恰好是最没动力声明的那个。
+
+**为什么用清单而不是导入闭包（C 的升级路径）**：`src/quality/import-graph.ts` 存在，能回答“认证路径读了什么”，那是不会漂移的答案；但在根集合本身还要手写之前，先把手写的根集合放在**能被读到、被审到、被测到**的地方。升级到 C 的条件已写在模块注释里。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **375 文件 / 2325 用例全绿**；`check:wiring` 既有 11 条不变。**反证（两处）**：关掉判定分支 → 行为用例转红；只关掉写回执的拒绝 → 两条用例（含 CLI 那条）转红；恢复即绿。**清单自身的仪器**：每条路径必须存在、每条必须写清理由（>20 字符）、面不能为空、文件条目精确匹配而目录条目前缀匹配（`src/quality/evidence.ts` 与 `src/quality/review-ladder.ts.bak` 都**不**命中，所以这不是“整个 `src/quality/` 一刀切”）。**负例**：普通 C（只改自己的交付物）仍是 `pending` 并能正常返回——面不是对所有返修工作的门。
+
+**过程中被仓库自己的守卫抓到一次**：清单最初写了渲染后的 reviewer 入口路径（含平台名），`platform-coupling-is-measured` 立刻报“adapter 变更半径变大”。改成写**源文件**（`src/adapters/manifest.ts`）——更正确，因为渲染产物由 `kata-cli update` 生成，改它本来就该改源。
+
+**仍未实施**（第 20 节）：#1 `dependencyIdentity`、#5 `legacy-undetermined`、#8 跨记录“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。
