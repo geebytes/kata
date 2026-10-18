@@ -53,7 +53,7 @@ import { acceptanceContractHashOf, readTask, UnreadableTaskRecord } from '../cor
 import type { CheckProgressEvent } from '../quality/evidence.js';
 import { buildChangeRecord, writeChangeRecord } from '../quality/change-record.js';
 import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, reviewRequestPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
-import { assertDependencyAllowsEntry, dependencyRefusal, readTaskDependency, type GovernedEntry } from './task-dependency.js';
+import { assertDependencyAllowsEntry, dependencyIdentityFor, dependencyRefusal, readTaskDependency, type GovernedEntry } from './task-dependency.js';
 
 export type KataCommand = 'open' | 'design' | 'build' | 'review' | 'judge' | 'verify' | 'archive' | 'hotfix' | 'tweak';
 
@@ -2233,12 +2233,13 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                             'utf8',
                         );
                     }
+            const recordedDependencyIdentity = await dependencyIdentityFor(root, taskId);
             const committed = await commitReviewDecision(root, taskId, resultSnapshot, async (lock) => {
                 await mutateTaskArtefact(
                     root,
                     taskId,
                     recordPath,
-                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), reviewKind: expectedKind, ...(declaredReviewKind === undefined ? { reviewKindUndeclared: true } : {}), findings, ...(findingsWithoutClass.length > 0 ? { findingsWithoutClass } : {}), ...(declaredCoverage === null ? {} : { declaredCoverage }), ...(recurrenceAnalysis === undefined ? {} : { recurrenceAnalysis }), ...(Array.isArray(declaredBatchClosure) && declaredBatchClosure.length > 0 ? { batchClosure: declaredBatchClosure } : {}), status: 'pending', reviewRoute: 'adversarial', recordedAt: new Date().toISOString(), ...(typeof declaredRequestId === 'string' ? { requestId: declaredRequestId } : {}) }, null, 2)}\n`,
+                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(recordedDependencyIdentity === null ? {} : { dependencyIdentity: recordedDependencyIdentity }), ...(currentSubject ? { subjectRevision: currentSubject } : {}), reviewKind: expectedKind, ...(declaredReviewKind === undefined ? { reviewKindUndeclared: true } : {}), findings, ...(findingsWithoutClass.length > 0 ? { findingsWithoutClass } : {}), ...(declaredCoverage === null ? {} : { declaredCoverage }), ...(recurrenceAnalysis === undefined ? {} : { recurrenceAnalysis }), ...(Array.isArray(declaredBatchClosure) && declaredBatchClosure.length > 0 ? { batchClosure: declaredBatchClosure } : {}), status: 'pending', reviewRoute: 'adversarial', recordedAt: new Date().toISOString(), ...(typeof declaredRequestId === 'string' ? { requestId: declaredRequestId } : {}) }, null, 2)}\n`,
                     lock,
                 );
             });
@@ -2523,6 +2524,10 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // The findings this approval cleared, carried onto the round it records — see the append below.
             const approvedFindings = (approvalRecord.record.findings ?? []) as Array<{ id: string; severity: string; class?: string; origin?: string }>;
             const approveBinding = await currentRevisionIdentityFrom(approvalRevisionRead, root, taskId);
+            // **Read before the mutation, never inside it.** The approval is the record every later gate reads, so it carries
+            // the dependency identity it was granted under (§6.2); reading the graph from inside the write callback would be a
+            // read during a write, which is the shape the mixed-generation check exists to refuse.
+            const approveDependencyIdentity = await dependencyIdentityFor(root, taskId);
             if (!approveBinding.revisionId || !approveBinding.manifestHash) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
@@ -2565,7 +2570,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const approvedReviewedRevisionId = typeof approvalRecord.record.reviewedRevisionId === 'string'
                 ? approvalRecord.record.reviewedRevisionId
                 : approveBinding.revisionId ?? undefined;
-            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(approvedReviewedRevisionId ? { reviewedRevisionId: approvedReviewedRevisionId } : {}), ...revisionBindingFields(approveBinding), ...(approvalSubject ? { subjectRevision: approvalSubject } : {}), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
+            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(approvedReviewedRevisionId ? { reviewedRevisionId: approvedReviewedRevisionId } : {}), ...revisionBindingFields(approveBinding), ...(approveDependencyIdentity === null ? {} : { dependencyIdentity: approveDependencyIdentity }), ...(approvalSubject ? { subjectRevision: approvalSubject } : {}), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
             const committed = await commitReviewDecision(root, taskId, approvalSnapshot, async (lock) => {
                 await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes, lock);
                 // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a
@@ -2651,6 +2656,9 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         const entrySnapshot = await readReviewDecisionSnapshot(root, taskId);
         const entryRevisionRead = entrySnapshot.revisionRead;
         const entryBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
+        // The placeholder this entry opens with is stamped like every other review record: the field's absence means "written
+        // before the edge existed" to every reader, and a placeholder is not such a record.
+        const entryDependencyIdentity = await dependencyIdentityFor(root, taskId);
         // **A refusal must not move the task, so it is decided before anything is written.** This check used to live inside
         // the lock callback, which runs after `guardTransition` and `transition` have already put the task in `review`: the
         // refusal was emitted with the phase already changed, so "refused" and "re-entered review" happened together
@@ -2760,7 +2768,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         'utf8',
                     );
                 }
-                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), ...(entryDependencyIdentity === null ? {} : { dependencyIdentity: entryDependencyIdentity }), findings: [], status: 'pending' }, null, 2)}\n`, lock);
             });
         } catch (error) {
             return {

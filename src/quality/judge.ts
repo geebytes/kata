@@ -166,6 +166,13 @@ export interface JudgeResult {
   result: 'PASS' | 'FAIL';
   diffHash: string;
   revisionId?: string;
+  /**
+   * The dependency identity this judgement was certified under (§6.2), when an edge claims the task.
+   *
+   * Read beside the content binding and compared by the same rule (`speaksForDependency`): a judgement made before the edge
+   * existed names none, and the clearance reads that as needing re-validation rather than as bound.
+   */
+  dependencyIdentity?: string;
   /** The declared request this judgement answered. */
   subjectRevision?: string;
   acceptance: JudgeAcceptanceResult[];
@@ -227,7 +234,12 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
   // hands in both its authorizing read and, when this is a review-family decision, the lock that validated it.
   const { revisionBindingFields } = await import('../workflow/verdict-binding.js');
   const binding = revisionBindingFields(await identityFor(input, root));
-  const serialized = `${JSON.stringify({ ...result, ...binding }, null, 2)}\n`;
+  // **The dependency identity, stamped beside the content binding (§6.2).** A judgement is conditional on the dependency as
+  // well as on the content, and the two must stay separable: `revisionId`/`manifestHash` say which code was judged, this
+  // says under which dependency. Absent when no edge claims the task, so an edge-less change's record is unchanged.
+  const { dependencyIdentityFor } = await import('../workflow/task-dependency.js');
+  const dependencyIdentity = await dependencyIdentityFor(root, input.taskId);
+  const serialized = `${JSON.stringify({ ...result, ...binding, ...(dependencyIdentity === null ? {} : { dependencyIdentity }) }, null, 2)}\n`;
   await mutateTaskArtefact(
     root,
     input.taskId,

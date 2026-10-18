@@ -611,3 +611,27 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **实测证据**：`tsc --noEmit` 退出 0；全量 **375 文件 / 2329 用例全绿**（本片新增 4 例）；`check:wiring` 既有 11 条不变。**反证**：把代比较关掉 → 恢复用例与拒绝对例同时转红（拒绝对例变得不可达），恢复即绿。**确定性**：竞态用 `vi.mock` 包裹真实的 `readKataRelations`（仓库既有做法，如 `a-damaged-gate-record-is-not-an-absent-one`），只推进它报告的 `updatedAt`，边仍来自真实 fixture——所以断言针对的是代检查本身，不是合成图。
 
 **仍未实施**（第 20/24 节）：#1 `dependencyIdentity`（**需要受保护 schema 变更授权**：`schemas/review.schema.json` 与 `schemas/judge-result.schema.json` 都是 `additionalProperties: false`，把依赖身份写进裁定记录必须改这两个文件）、#5 `legacy-undetermined`、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。
+
+## 26. #1 已实施（受保护 schema 已获授权）：依赖身份与内容身份分离（2026-10-18）
+
+**#1 已按 §6.2 实施，并包含你授权的受保护 schema 变更。** 设计原文：*“不要将内容身份与依赖身份混为一个哈希 … 但 dependency edge/C revision/集成状态任何一个变化，旧的 D Review/Judge 结论**必须失效或进入具名需重验**。”*
+
+**一个值，一处推导**（`src/workflow/task-dependency.ts` 的 `dependencyIdentityOf`，协议版本 `task-dependency@1`）：按边（排序后）取 `relationId` + 纠正行动任务 id + **C 的已认证 revision** + **记录在案的集成内容摘要**。它出现在 `TaskDependencyDecision.dependencyIdentity` 上，因此“盖进裁定”和“事后比较”用的是同一次读。
+
+**它刻意不包含什么（每条都有理由）**：
+- 边的 `reason`：散文变更不得让认证失效——本仓库专门把治理文本与代码分开；
+- 返回记录的 `recordedAt`：无操作的重记不是“认证了什么”的事实；
+- **D 自己的 revision id**：内容那一半由既有 `revisionId`/`manifestHash`/`candidateFreezeSha256` 负责，而 `bindsToRevision` **有意**让“内容未变的重封”继续成立（memory #993）。把 D 的 revision 塞进依赖身份会因设计未要求的理由作废它。
+
+**一处规则，两个消费者**（`src/workflow/verdict-binding.ts` 的 `speaksForDependency`）：`bindsToRevision` 在调用方传入当前身份时先问它；`decideTaskDependencies` 对 D 自己的 judge 记录问同一个函数。语义：当前身份为 `null`（无依赖边）→ 该问题不适用，旧规则独自决定；否则裁定**必须点名**同一身份，**不点名即不通过**（写在边出现之前的裁定=未绑定）。
+
+**落点**：
+- 盖入：`judge.ts` 的裁定记录、`review` 的三处记录写入点（结果记录、批准、新一轮占位）、以及两条 gate 读取路径；
+- 失效：`distill-gates` 的 `evaluateReviewClearance` 新增具名 reason **`stale_dependency`**（与 `stale_review` 分开，因为补救不同：一个重读一轮，一个在返回的依赖下重做认证）；`evaluateJudgePass` 同问；
+- **`revalidated` 的定义收紧到设计原文**：“D 对新的依赖身份和当前内容完成所需证据/审查”——返回已到 + D 已重封 **+ D 的 judge 记录点名当前依赖身份**；否则是具名 `ready_to_revalidate`，reason **`revalidated_under_an_older_dependency`**（road 是真实命令 `kata-cli status --change <D>`）。
+
+**受保护 schema 变更（已授权，逐条记录）**：`schemas/review.schema.json` 与 `schemas/judge-result.schema.json` 各**新增一个可选字段** `dependencyIdentity`（description 说明为何与内容身份分离）。**没有**修改 `task.schema.json`、`revision.schema.json` 或任何既有字段；`verify-result` 未改（设计只要求 Review/Judge）。**版本读取策略（即 #9 对这一字段的答复）**：字段可选 → 旧记录照常可读；**缺失即“未绑定”**，读到缺失的读者走具名需重验，而不是把它当成“没有依赖所以没问题”。写入端只由当前协议版本产生。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **376 文件 / 2335 用例全绿**（本片新增 6 例）；`check:wiring` 既有 11 条不变。**反证（四处，各自独立）**：① 删掉决定分支里对 judge 身份的检查 → 行为用例转红；② 删掉 gate 里的依赖比较 → 该用例转红；③ 只删 judge 那半 → 另一用例转红；④ 把 D 的 revision 塞进身份（即设计禁止的“混为一个哈希”）会使既有 `bindsToRevision` 的“内容未变重封仍成立”语义反转，故未采用并已在代码注释中记录理由。**既有测试的两处更新（不是掩盖）**：两个 fixture 原来把“已 Judge”当成“已认证”、把 `revalidated` 当成“重封即算”，现在分别补上绑定的批准审查记录与点名当前依赖身份的 judge 记录——它们此前建模的是设计不接受的状态，注释已写明。
+
+**仍未实施**（第 20/24 节）：#5 `legacy-undetermined`、#10 §8.2 反馈分类、#11 PDSA 试点；#7 已实测并有条件建议不改。

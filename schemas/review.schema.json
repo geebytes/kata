@@ -36,6 +36,10 @@
       "description": "The frozen candidate this verdict answered (\u00a77.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
       "type": "string"
     },
+    "dependencyIdentity": {
+      "description": "The dependency identity this verdict was certified under (\u00a76.2): the protocol version plus, for each blocking edge, its id, the corrective task's accepted revision and the digest of that task's content actually present in this tree. Absent on a verdict written before the edge existed, which is why a reader treats an unbound verdict as needing re-validation rather than as bound. Deliberately separate from the content identity: `revisionId`/`manifestHash` describe the code, and a change to either must not be faked by rewriting the other.",
+      "type": "string"
+    },
     "status": {
       "type": "string",
       "enum": [

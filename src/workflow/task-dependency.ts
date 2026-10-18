@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readValidatedOptional } from '../core/schema.js';
 import { dependenciesPath, judgePath, reviewPath } from '../core/layout.js';
 import { readKataRelations, type KataRelationWithLegacyId } from '../core/relations.js';
@@ -5,7 +6,7 @@ import { readCurrentStateOr, type StateRead } from '../core/state.js';
 import { withRepositoryArtefactLock } from '../core/locks.js';
 import { assertValidTaskId } from '../core/ids.js';
 import { computeManifestHash, readCurrentTaskRevisionState } from './revision.js';
-import { bindsToRevision, currentRevisionIdentityFrom, type VerdictBinding } from './verdict-binding.js';
+import { bindsToRevision, currentRevisionIdentityFrom, speaksForDependency, type VerdictBinding } from './verdict-binding.js';
 import { certificationSurfaceFor } from '../quality/certification-surface.js';
 
 /**
@@ -30,6 +31,7 @@ import { certificationSurfaceFor } from '../quality/certification-surface.js';
  */
 
 export type TaskDependencyState = 'absent' | 'pending' | 'undetermined' | 'ready_to_revalidate' | 'revalidated';
+
 
 /** The governed entries a blocking edge can stop. `seal` also covers `build` (which seals unless asked not to). */
 export type GovernedEntry = 'seal' | 'verify' | 'review' | 'judge' | 'archive';
@@ -100,7 +102,8 @@ export type DependencyReturn = {
 export type DependencyBlocker = {
     relationId: string | null;
     correctiveTaskId: string;
-    state: 'pending' | 'undetermined';
+    /** The state this one edge reports: `pending`/`undetermined` while outstanding, `ready_to_revalidate` once it returned without the dependent task re-certifying under it. */
+    state: 'pending' | 'undetermined' | 'ready_to_revalidate';
     /** Machine-readable, stable, and what a caller keys on. */
     reason: string;
     detail: string;
@@ -115,12 +118,21 @@ export type TaskDependencyDecision = {
     blockers: DependencyBlocker[];
     /** The dependent task's revision at read time; the identity a return is recorded against and compared with. */
     subjectRevisionId: string | null;
+    /**
+     * The dependency identity a verdict about this task must name (§6.2), or `null` when no edge claims it.
+     *
+     * Published on the decision rather than derived by each consumer, so the value a verdict is stamped with and the value
+     * it is later compared against cannot come from two different readings of the graph.
+     */
+    dependencyIdentity: string | null;
 };
 
 /** The one place a state becomes a sentence and a road. */
 function blocker(input: {
     edge: DependencyEdge;
-    state: 'pending' | 'undetermined';
+    // The same union as `DependencyBlocker['state']`: a blocker reports what one edge is waiting for, and that includes the
+    // returned-but-not-re-certified state.
+    state: DependencyBlocker['state'];
     reason: string;
     detail: string;
     road: string | null;
@@ -188,11 +200,21 @@ export function decideTaskDependencies(input: {
     corrective: readonly CorrectiveFacts[];
     returns: readonly DependencyReturn[];
     subjectRevisionId: string | null;
+    /**
+     * **This task's own judge record, read by the caller so the decision stays pure.**
+     *
+     * `revalidated` is the design's "D completed the evidence and review the new dependency identity requires", not merely
+     * "D re-sealed": a judge record that names an older dependency identity (or names none, which is what a verdict written
+     * before the edge existed looks like) means the certification predates the fact it would have to speak for.
+     */
+    subjectJudge?: { dependencyIdentity?: string } | null;
 }): TaskDependencyDecision {
     const { taskId, edges, corrective, returns, subjectRevisionId } = input;
     if (edges.length === 0) {
-        return { taskId, state: 'absent', edges: [], blockers: [], subjectRevisionId };
+        return { taskId, state: 'absent', edges: [], blockers: [], subjectRevisionId, dependencyIdentity: null };
     }
+    // Derived once, here, from the inputs the decision was handed: every branch below and every consumer reads this value.
+    const dependencyIdentity = dependencyIdentityOf({ edges, corrective, returns });
 
     const correctiveById = new Map(corrective.map((facts) => [facts.taskId, facts]));
     const returnsByRelation = new Map(returns.map((record) => [record.relationId, record]));
@@ -313,10 +335,34 @@ export function decideTaskDependencies(input: {
     }
 
     if (blockers.some((entry) => entry.state === 'undetermined')) {
-        return { taskId, state: 'undetermined', edges: [...edges], blockers, subjectRevisionId };
+        return { taskId, state: 'undetermined', edges: [...edges], blockers, subjectRevisionId, dependencyIdentity };
     }
     if (blockers.length > 0) {
-        return { taskId, state: 'pending', edges: [...edges], blockers, subjectRevisionId };
+        return { taskId, state: 'pending', edges: [...edges], blockers, subjectRevisionId, dependencyIdentity };
+    }
+
+    // **`revalidated` is a claim about evidence, not about a pointer.** Every edge returned and this task re-sealed, but its
+    // judge record must also **name this dependency identity**: a record that names an older one was certified under a
+    // dependency that has since moved, and a record that names none predates the edge entirely. Both are the design's "D 的
+    // 旧 Review/Judge 结论必须失效或进入具名需重验", reported as the named re-validation state rather than as a quiet pass —
+    // and the reason is its own, because the remedy (re-run the certification) differs from the remedy for "not yet returned".
+    const judgeSpeaks = speaksForDependency(input.subjectJudge, dependencyIdentity);
+    if (everyEdgeRevalidated && !judgeSpeaks) {
+        return {
+            taskId,
+            state: 'ready_to_revalidate',
+            edges: [...edges],
+            blockers: edges.map((edge) => blocker({
+                edge,
+                state: 'ready_to_revalidate',
+                reason: 'revalidated_under_an_older_dependency',
+                detail: `The corrective work has returned, but this task's own judge record does not name the current dependency identity `
+                    + `(${dependencyIdentity ?? '<none>'}): the certification predates the dependency it would have to speak for.`,
+                road: `kata-cli status --change ${taskId}`,
+            })),
+            subjectRevisionId,
+            dependencyIdentity,
+        };
     }
     return {
         taskId,
@@ -324,6 +370,7 @@ export function decideTaskDependencies(input: {
         edges: [...edges],
         blockers: [],
         subjectRevisionId,
+        dependencyIdentity,
     };
 }
 
@@ -478,6 +525,49 @@ export type DependencyGeneration = {
     correctiveRevisionIds: Record<string, string | null>;
 };
 
+/**
+ * **The dependency identity (§6.2): what a verdict about this task is conditional on, as one value.**
+ *
+ * The design separates it from the content identity in as many words — *"不要将内容身份与依赖身份混为一个哈希"* — and the reason
+ * is mechanical: a revision id answers "which code", and the facts here answer "under which dependency". Folding them into
+ * one hash would make each able to launder the other: re-sealing unchanged content would look like a new dependency, and a
+ * moved dependency would look like unchanged content.
+ *
+ * It covers the protocol version and, per edge, the edge id, the corrective task's **accepted revision** and the digest of
+ * that task's content **actually present in this tree**. It deliberately does **not** cover the edge's `reason` (prose must
+ * not expire a certification — the repository splits governance text from code for exactly that) or the return's
+ * `recordedAt` (a no-op re-record is not a fact about what was certified).
+ *
+ * It also does not cover this task's own revision id: `bindsToRevision` already compares content, and it deliberately keeps
+ * a verdict alive across a re-seal of **identical** content (`manifestHash` equality). Putting the subject's revision id in
+ * here would expire that verdict for a reason the design does not ask for and the repository measured its way out of.
+ */
+export function dependencyIdentityOf(decision: {
+    edges: readonly DependencyEdge[];
+    corrective: readonly CorrectiveFacts[];
+    returns: readonly DependencyReturn[];
+}): string | null {
+    if (decision.edges.length === 0) return null;
+    const facts = decision.edges
+        .map((edge) => {
+            const corrective = decision.corrective.find((entry) => entry.taskId === edge.correctiveTaskId);
+            const returned = edge.relationId === null
+                ? undefined
+                : decision.returns.find((entry) => entry.relationId === edge.relationId);
+            return [
+                edge.relationId ?? '<legacy>',
+                edge.correctiveTaskId,
+                corrective?.revisionId ?? '<none>',
+                returned?.integratedContentHash ?? '<none>',
+            ].join('\u0000');
+        })
+        // Sorted, so the identity describes the *set* of dependencies rather than the order the graph happened to store them in.
+        .sort();
+    return createHash('sha256')
+        .update(JSON.stringify({ protocol: DEPENDENCY_PROTOCOL, edges: facts }))
+        .digest('hex');
+}
+
 /** Which generations moved between two snapshots, named so the refusal can say what changed under it. */
 export function movedGenerations(before: DependencyGeneration, after: DependencyGeneration): string[] {
     const moved: string[] = [];
@@ -555,6 +645,15 @@ async function readCorrectiveFacts(root: string, taskId: string): Promise<Correc
  */
 const DEPENDENCY_READ_ATTEMPTS = 2;
 
+/**
+ * **The version of the dependency protocol a verdict was certified under.**
+ *
+ * It is part of the identity because the *meaning* of "the dependency is satisfied" can change while every edge and digest
+ * stays byte-identical — a later kata that decides a return differently must not inherit a verdict made under this one. A
+ * bump here therefore expires verdicts deliberately, which is the point: it is the one place that decision can be made.
+ */
+export const DEPENDENCY_PROTOCOL = 'task-dependency@1';
+
 /** Read this task's dependency decision from the repository. The one reader every governed entry and `status` uses. */
 export async function readTaskDependency(root: string, taskId: string): Promise<TaskDependencyDecision> {
     assertValidTaskId(taskId);
@@ -572,7 +671,7 @@ export async function readTaskDependency(root: string, taskId: string): Promise<
         // No edge claims anything: there is nothing for a mixed-generation read to mix, so this returns without the extra
         // reads — and an edge-less task stays exactly as cheap as it was.
         if (edges.length === 0) {
-            return { taskId, state: 'absent', edges: [], blockers: [], subjectRevisionId };
+            return { taskId, state: 'absent', edges: [], blockers: [], subjectRevisionId, dependencyIdentity: null };
         }
 
         // **A return record that cannot be read is `unreadable`, not empty.** Reading it as "no returns" would turn a damaged
@@ -592,6 +691,7 @@ export async function readTaskDependency(root: string, taskId: string): Promise<
                     road: `kata-cli dependency status --change ${taskId}`,
                 })),
                 subjectRevisionId,
+                dependencyIdentity: dependencyIdentityOf({ edges, corrective: [], returns: [] }),
             };
         }
 
@@ -599,6 +699,10 @@ export async function readTaskDependency(root: string, taskId: string): Promise<
         for (const edge of edges) {
             corrective.push(await readCorrectiveFacts(root, edge.correctiveTaskId));
         }
+        // This task's own judge record, read here so the decision stays a pure function of its inputs. A record that cannot
+        // be read is handed in as `null`, which `speaksForDependency` refuses — a damaged record is not a certification.
+        const subjectJudge = await readValidatedOptional<{ dependencyIdentity?: string }>('judge-result', judgePath(root, taskId))
+            .catch(() => null);
 
         // **The generations, compared before the answer is used.** The values here are the ones the answer already read —
         // the graph's `updatedAt` from the read that produced the edges, the return record's from its own read, the revision
@@ -618,6 +722,7 @@ export async function readTaskDependency(root: string, taskId: string): Promise<
                 corrective,
                 returns: returnsRead.returns,
                 subjectRevisionId,
+                subjectJudge,
             });
         }
         lastMoved = moved;
@@ -630,6 +735,10 @@ export async function readTaskDependency(root: string, taskId: string): Promise<
         taskId,
         state: 'undetermined',
         edges: lastEdges,
+        // **No identity can be established from a read that never settled**, and `null` is the honest value: this decision
+        // refuses every governed entry, so no verdict can be stamped from it, and a verdict stamped from some other reading
+        // will not speak for the identity that is eventually established — which is the conservative direction.
+        dependencyIdentity: null,
         blockers: lastEdges.map((edge) => blocker({
             edge,
             state: 'undetermined',
@@ -639,6 +748,16 @@ export async function readTaskDependency(root: string, taskId: string): Promise<
         })),
         subjectRevisionId: lastSubjectRevisionId,
     };
+}
+
+/**
+ * **The identity a verdict about this task must name, read from the repository.**
+ *
+ * `null` when no edge claims the task, which is what makes "no dependency" distinguishable from "a dependency nobody
+ * stamped": a caller compares with `speaksForDependency`, where `null` means the question does not apply.
+ */
+export async function dependencyIdentityFor(root: string, taskId: string): Promise<string | null> {
+    return (await readTaskDependency(root, taskId)).dependencyIdentity;
 }
 
 /** Re-read just the generations, without re-reading the facts they guard. */

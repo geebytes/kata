@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { readTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeResult } from '../quality/judge.js';
 import { judgePath, reviewPath } from '../core/layout.js';
-import { bindsToRevision, currentRevisionIdentityFrom } from './verdict-binding.js';
+import { bindsToRevision, currentRevisionIdentityFrom, speaksForDependency } from './verdict-binding.js';
+import { dependencyIdentityFor } from './task-dependency.js';
 import { readReviewDecisionSnapshot } from './revision.js';
 import { readBlockingProblems, readReviewRecord } from './review-read.js';
 
@@ -64,7 +65,14 @@ export interface ReviewClearance {
      * the ledger and a hole for one approved *on* it, and this is the fact that tells the two apart.
      */
     restsOn: 'ledger' | 'adversarial' | 'unstated';
-    reason?: 'not_approved' | 'no_review_evidence' | 'blocking_findings' | 'stale_review' | 'unreadable_review';
+    /**
+     * Why the clearance was refused, named for the remedy.
+     *
+     * `stale_dependency` is its own reason because it is not the same repair as `stale_review`: the content binding still
+     * holds, and what moved is the dependency the certification was conditional on (§6.2) — so the round is not re-read, the
+     * certification is re-run under the returned dependency.
+     */
+    reason?: 'not_approved' | 'no_review_evidence' | 'blocking_findings' | 'stale_review' | 'stale_dependency' | 'unreadable_review';
     /** Why a `unreadable_review` refusal happened: the reader's own sentence, not a re-description of it. */
     detail?: string;
 }
@@ -89,6 +97,7 @@ export async function evaluateReviewClearance(
         status?: string;
         reviewEvidence?: string;
         reviewRoute?: string;
+        dependencyIdentity?: string;
     };
     // The route travels with the refusal as well as the clearance: a caller that only learns "not cleared" cannot tell an
     // absent record from a record whose basis is gone.
@@ -113,8 +122,14 @@ export async function evaluateReviewClearance(
     }
     // Bound by revision **or** by the content it reviewed: a re-seal of unchanged owned paths issues a new id, and
     // expiring the clearance there is what made a re-seal re-run the whole review.
-    if (revisionId && !bindsToRevision(review, { ...(await currentRevisionIdentityFrom(snapshot.revisionRead, root, taskId)), revisionId })) {
-        return { cleared: false, restsOn, reason: 'stale_review' };
+    // **The dependency half of the binding, asked of the same rule.** §6.2 requires that a move in the dependency facts
+    // expires D's conclusions, and this is the clearance every archive rests on: a review approved under a dependency that
+    // has since moved (or approved before the edge existed, which is what a record naming none looks like) is `stale_dependency`,
+    // named separately from `stale_review` because the remedies differ — one re-runs the round, this one re-runs the
+    // certification under the returned dependency.
+    const dependencyIdentity = await dependencyIdentityFor(root, taskId);
+    if (revisionId && !bindsToRevision(review, { ...(await currentRevisionIdentityFrom(snapshot.revisionRead, root, taskId)), revisionId }, { dependencyIdentity })) {
+        return { cleared: false, restsOn, reason: dependencyIdentity !== null && !speaksForDependency(review, dependencyIdentity) ? 'stale_dependency' : 'stale_review' };
     }
     return { cleared: true, restsOn, ...(revisionId ? { revisionId } : {}) };
 }
@@ -142,13 +157,18 @@ export async function evaluateJudgePass(input: {
     if (!answersCurrentQuestion(questionBinding(judge.subjectRevision, currentSubjectRevision))) {
         return { passed: false, reason: 'stale_subject' };
     }
+    // The dependency identity this change is currently under, asked once and used by both branches below: a judgement is
+    // conditional on the dependency exactly as a review is, and `null` (no edge) leaves the older rules deciding alone.
+    const dependencyIdentity = await dependencyIdentityFor(input.root, input.taskId);
     if (input.freshEvidence?.revisionId) {
         // The id is the revision the fresh evidence was sealed under; the content fields come from the current revision,
         // because a re-seal of unchanged content issues a new id and the content is what a verdict is really about.
         const identity = await currentRevisionIdentityFrom((await readReviewDecisionSnapshot(input.root, input.taskId)).revisionRead, input.root, input.taskId);
-        if (!bindsToRevision(judge, { ...identity, revisionId: input.freshEvidence.revisionId })) {
+        if (!bindsToRevision(judge, { ...identity, revisionId: input.freshEvidence.revisionId }, { dependencyIdentity })) {
             return { passed: false, reason: 'stale_judgement' };
         }
+    } else if (!speaksForDependency(judge, dependencyIdentity)) {
+        return { passed: false, reason: 'stale_judgement' };
     } else if (judge.diffHash !== input.currentDiffHash) {
         return { passed: false, reason: 'stale_judgement' };
     }

@@ -8,6 +8,8 @@ import { addKataRelation } from '../../src/core/relations.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import {
     decideTaskDependencies,
+    dependencyIdentityFor,
+    dependencyIdentityOf,
     dependencyRefusal,
     readTaskDependency,
     recordDependencyReturn,
@@ -223,17 +225,42 @@ describe('the one decision about a blocking edge', () => {
         expect(dependencyRefusal(decision, 'archive')?.message).toMatch(/not been re-validated/u);
     });
 
-    it('is revalidated once the dependent task stands at a different revision than the return was recorded against', () => {
+    it('is revalidated once the dependent task stands at a different revision AND its own judge names the dependency', () => {
+        // **Two facts, because `revalidated` is a claim about evidence rather than about a pointer.** The design's own
+        // definition is "D 对新的依赖身份和当前内容完成所需证据/审查": re-sealing proves the content moved, and the judge record
+        // naming the dependency identity proves the certification happened *under* it. The identity is derived here the same
+        // way the repository derives it, so the case cannot pass by inventing a value.
+        const identity = dependencyIdentityOf({ edges: [edge], corrective: [certified], returns: [recordedReturn] });
+        expect(identity).not.toBeNull();
+
         const decision = decideTaskDependencies({
             taskId: 'dependent',
             edges: [edge],
             corrective: [certified],
             returns: [recordedReturn],
             subjectRevisionId: 'rev-d2',
+            subjectJudge: { dependencyIdentity: identity as string },
         });
         expect(decision.state).toBe('revalidated');
+        expect(decision.dependencyIdentity).toBe(identity);
         expect(dependencyRefusal(decision, 'judge')).toBeNull();
         expect(dependencyRefusal(decision, 'archive')).toBeNull();
+
+        // The same re-seal with a judge record that names an older dependency (or none at all, which is what a verdict
+        // written before the edge existed looks like) is the named re-validation state, not a pass.
+        for (const judge of [{ dependencyIdentity: 'a-different-dependency' }, {}, null]) {
+            const stale = decideTaskDependencies({
+                taskId: 'dependent',
+                edges: [edge],
+                corrective: [certified],
+                returns: [recordedReturn],
+                subjectRevisionId: 'rev-d2',
+                subjectJudge: judge,
+            });
+            expect(stale.state, `judge ${JSON.stringify(judge)} must not clear the dependency`).toBe('ready_to_revalidate');
+            expect(stale.blockers[0]?.reason).toBe('revalidated_under_an_older_dependency');
+            expect(stale.blockers[0]?.road).toBe('kata-cli status --change dependent');
+        }
     });
 
     it('takes the worst state over several edges, because either one blocks', () => {
@@ -279,13 +306,23 @@ describe('a blocked task cannot certify itself past its gate', () => {
         await expect(runCommand('archive', 'dependent', root)).rejects.toThrow(/not been re-validated/u);
     });
 
-    it('stops refusing once the dependent task re-sealed on the returned content', async () => {
+    it('stops refusing once the dependent task re-sealed on the returned content and re-certified under it', async () => {
         const { root, relationId } = await fixture('revalidated', { certifyCorrective: true });
         await recordDependencyReturn({ root, taskId: 'dependent', relationId });
         // The re-validation itself: the dependent task's own content moves, so its revision is no longer the one the return
         // was recorded against. Nothing here fakes a pass — the state only says the re-validation has happened.
         write(root, 'src/dependent.ts', 'dependent v2\n');
         await createTaskRevisionIfChanged({ root, taskId: 'dependent', ownedPaths: ['src/dependent.ts'] });
+
+        // **And the certification has to have happened under the dependency.** A judge record stamped before the edge
+        // existed (or under a dependency that has since moved) leaves this at the named re-validation state — which is the
+        // design's "D 的旧 Review/Judge 结论必须失效或进入具名需重验". The identity is read from the repository, not invented.
+        const identity = await dependencyIdentityFor(root, 'dependent');
+        expect(identity).not.toBeNull();
+        write(root, '.kata/tasks/dependent/judge.json', `${JSON.stringify({
+            taskId: 'dependent', result: 'PASS', revisionId: 'revision-dependent',
+            acceptance: [{ id: 'AC-1', result: 'PASS' }], dependencyIdentity: identity,
+        })}\n`);
 
         const decision = await readTaskDependency(root, 'dependent');
         expect(decision.state).toBe('revalidated');

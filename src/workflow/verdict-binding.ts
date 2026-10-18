@@ -39,6 +39,18 @@ export interface VerdictBinding {
      * written before this contract keeps the older rule rather than failing.
      */
     candidateFreezeSha256?: string;
+    /**
+     * **The dependency identity this verdict was certified under (§6.2) — a different fact from the content identity.**
+     *
+     * `revisionId`/`manifestHash` describe the code and must keep doing only that; the dependency identity describes the
+     * edge, the corrective action's accepted revision and the content that actually entered this tree. The design's rule is
+     * that either may change without the other being faked: a change to the dependency facts must not be hidden behind an
+     * unchanged revision id, and re-sealing unchanged content must not launder a moved dependency.
+     *
+     * Absent on a verdict written before the edge existed. That absence is read as **not bound** — the verdict predates the
+     * fact it would have to speak for — never as "no dependency, therefore fine".
+     */
+    dependencyIdentity?: string;
 }
 
 /**
@@ -149,6 +161,23 @@ export function revisionBindingFields(identity: RevisionIdentity): VerdictBindin
  * `!record.revisionId && !record.manifestHash`, `bindsToRevision` read its own fall-through, and `assertRevision` carried a
  * third exemption, so one fact had three answers from three symbols and no instrument decided any of them).
  */
+/**
+ * **One answer to "was this verdict certified under this dependency?"** — asked by the gate that clears a change and by the
+ * dependency decision, so the two cannot disagree about whether a conclusion still stands.
+ *
+ * `current === null` means no edge claims the task: there is no dependency fact for any verdict to speak for, so every
+ * verdict passes this question and the older rules decide alone. Otherwise the verdict must **name** the same identity: a
+ * verdict that names none predates the edge (or was written by a path that does not stamp it), and the conservative reading
+ * is that it needs re-validation — never that it is fine because it said nothing.
+ */
+export function speaksForDependency(
+    artifact: { dependencyIdentity?: string } | null | undefined,
+    current: string | null,
+): boolean {
+    if (current === null) return true;
+    return artifact?.dependencyIdentity === current;
+}
+
 export function namesAnyBinding(record: VerdictBinding | null | undefined): boolean {
     return Boolean(record
         && (record.revisionId || record.manifestHash || record.codeManifestHash
@@ -178,9 +207,14 @@ export function unboundBindingSpeaksForCurrentContent(current: RevisionIdentity)
 export function bindsToRevision(
     artifact: VerdictBinding | null | undefined,
     current: RevisionIdentity,
-    options: { scope?: VerdictScope } = {},
+    options: { scope?: VerdictScope; dependencyIdentity?: string | null } = {},
 ): boolean {
     if (!artifact) return false;
+    // **The dependency half is checked before the content half, and it can refuse on its own.** A verdict certified under a
+    // dependency that has since moved is not rescued by its content still matching: the content was never the fact that
+    // changed. A caller that does not pass an identity is not asking this question — the corrective-action reader does not,
+    // because deriving a dependency identity from inside that read would walk the graph from within itself.
+    if (options.dependencyIdentity !== undefined && !speaksForDependency(artifact, options.dependencyIdentity)) return false;
     // **A record that names no binding at all is answered here, not by a fall-through**, so the fact has one home that
     // `recordSpeaksForCurrentContent` asks as well — see `unboundBindingSpeaksForCurrentContent`.
     if (!namesAnyBinding(artifact)) return unboundBindingSpeaksForCurrentContent(current);
