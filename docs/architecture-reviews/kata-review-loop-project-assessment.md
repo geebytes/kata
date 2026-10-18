@@ -440,3 +440,81 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **一处诚实的范围说明**：本片在 `runCommand` + 真实 fixture 层面验证（与既有 closure-contract 用例同层）；真实 `dist/cli.js` 端到端 smoke 被 handoff 守卫挡在 seal 之前，**没有**单独驱动，故不声称 CLI 层证据。
 
 **仍未做**：`.kata/tasks/**` 不随 Git 提交/推送；`workUnitKind` 未发布为字段；PDSA 试点仍需真实使用数据；本片未提交、未推送、未归档。
+
+## 20. 设计稿对照代码的完整性审计（2026-10-18；审计，不是总结）
+
+问题：“前面那轮优化设计是否都已实施？”**答案是否。** 下面是逐条对照（依据是设计稿 §6–§8 的原文与当前代码事实），分“已实施”与“未实施/部分实施”。审计只读代码与实测命令，不改任何东西。
+
+### 已实施（每条给出位置或实测）
+
+| 设计条款 | 事实 |
+|---|---|
+| §6.2 一份依赖决策、各动词不得重新推导 | `readTaskDependency` 是唯一投影：`src/workflow/orchestrator.ts:231`（seal/verify/review/judge/archive 五个动词经 `governedEntryFor`）、`:472-479`（`gate approve` 映射四个信任边界）、`src/workflow/navigation.ts:614`（status）、`src/workflow/metrics.ts:123` |
+| §6.3 五个状态 | `absent / pending / undetermined / ready_to_revalidate / revalidated` 全部存在；`pending` 允许修补、拒绝 seal/verify/review/judge/archive；`undetermined` 同样拒绝；`ready_to_revalidate` 放行 seal/verify/review、拒绝 judge |
+| §6.3 直调 CLI 也不能绕过 | 用例直接调 `runCommand`（`tests/unit/a-blocked-task-cannot-cross-its-gate.test.ts`），不是只测 status 推荐 |
+| §6.3 返回不必等 C 的 Archive | `recordDependencyReturn` 只看 C 的认证与集成，不看 C 的 phase |
+| §6.4 同类再犯停止自动新开 | `escalate_corrective_action_did_not_hold` + `escalate_declared_repair_did_not_hold`；class 的 `ifRecursAgain` 由既有机制消费 |
+| §6.4 一个未解除 class 只有一个 owner | `kata-cli corrective declare` 全仓枚举后拒绝第二个 owner |
+| §6.5 活性（依赖拒绝路径） | **实测**：被依赖门拒绝的 seal 前后 `revisions/` 计数均为 **0**，连续两次拒绝仍为 0（`/tmp/liveness-probe`，真实 `dist/cli.js`） |
+| §8.1 预检先于派发 | `review --preflight` 已实现并写入 usage（`src/cli/usage.ts:21`），且只拦“已存在且不合格”的 brief |
+| §8.4/§8.5 认证 ≠ 交付 ≠ 归档 | `src/workflow/completion.ts` 五个状态 + `kata-cli completion`；记录只存在于 worktree 时报 `delivered_records_elsewhere`，其 road 实测可走 |
+| §8.5 记录保存守卫是活的 | 删除守卫在 `src/workflow/worktree.ts:297-300` 用 `uniqueCopies` 判断“删掉会丢什么”（`check:wiring` 报的 `archiveRemovalTargets` 是另一处既有的死引用） |
+| §7 步骤 1 的事前预测与否决条件 | 已写入本文档 §7（采用/否决条件），但**试点本身未跑**（见下） |
+| §6.5 成本可读 | `kata-cli metrics`（轮次/revision/返修/阶段占用/class 与其影响的 change），并具名发布不可观测项 |
+
+### 未实施（每条给出可复现的依据）
+
+| # | 设计条款 | 现状与依据 |
+|---|---|---|
+| 1 | §6.2 `dependencyIdentity`（边 ID + C 被接受的 revision + 集成提交/受影响路径摘要 + D 当前 revision + 协议版本），且任一漂移必须使 D 的旧 Review/Judge 结论失效或进入具名需重验 | **完全未实现**：`grep -rn dependencyIdentity src/` → **0 处**。今天只有返回记录里的一个 `subjectRevisionId`，状态在读取时派生；没有任何身份被写进 D 的 review/judge 记录，漂移只会拒绝下一次进入，**不会**使已记录的结论失效 |
+| 2 | §6.3 父子关系的引用“机械生成并纳入”独立 reviewer 的阅读面 | **未实现**：`grep -n dependen src/store/review-request.ts` 只命中散文注释；ReviewRequest 的构造从不读 `readTaskDependency` |
+| 3 | §6.3 C 须先独立认证（Verify/Review/**Judge**），不得自己签发 return | **部分**：`readDependencyReturns` 只读 `judgePath`（`src/workflow/task-dependency.ts:2,375`），**不要求 C 有独立 Review 批准**——只有 Judge PASS 的 C 也能被返回 |
+| 4 | §6.3 C 若修改认证器/reviewer 入口，其批准资格须为 `undetermined`（须以独立来源核验候选产物） | **未实现**：代码中无任何相关判断 |
+| 5 | §6.5 旧 `blocked_by` 含义不明时标 `legacy-undetermined` 由 owner 迁移，不得默认已解决 | **未实现**：`grep -rn 'legacy-undetermined' src/` → **0 处**；旧边被直接当作依赖边读 |
+| 6 | §6.5 管理边界：看板记录 blocked 原因/年龄、吞吐 | **部分**：`metrics` 有 phase/轮次/revision/返修，**没有** blocked 原因年龄（`grep age src/workflow/metrics.ts` → 无） |
+| 7 | §6.5 失败的 seal 不发布孤儿 revision / 同一拒绝重复执行不得无限 re-seal | **部分**：依赖门路径已满足（上面实测 0）；但 **obligation 拒绝路径不满足**——既有用例自己写着 “The refused seal already minted its revision”，每次重试都会新增 revision |
+| 8 | §6.2 跨记录写入须有确定顺序、可重试幂等、混代读的拒绝/恢复策略 | **部分**：返回写入取了仓库 artefact 锁，但没有“代”（generation）概念，也没有混代读的拒绝策略，更无对应用例 |
+| 9 | §6.5 受控 schema 变更须单独授权并确认有效版本读取策略 | **部分**：本工作**只新增**三个 schema 文件（`schemas/task-dependency|task-completion|corrective-action.schema.json`），未修改受保护的 `task.schema.json`；但新增记录**没有**版本读取策略，也未经单独授权流程 |
+| 10 | §8.2 ①–⑥ 的反馈分类与“`routed/deferred/accepted` 不得冒充 `fixed`” | **部分**：只有既有的 `disposition`（`fixed` 关闭 finding，`isOpenFinding`）；没有 `Optional`/`insufficient` 之类的 finding 处置词汇，也没有“非缺陷建议”这一类 |
+| 11 | §7 步骤 1–4 的试点（真实 D/C、正反路径、成本对比、采用/否决） | **未执行**：没有在真实 change 上跑 D/C 试点；成本只是**可读**，没有任何对照测量，故 §6.5 的回本式仍无实测值 |
+
+### 结论
+
+设计稿的**机制骨架**已落地并各有实测反证：依赖决策与门禁、完成状态、派发前预检、纠正行动声明与一类一主、类级再犯路由、度量面，以及本轮修掉的 closure reader 缺陷。**但“全部实施”不成立**：上面 11 条里有 4 条（#1 `dependencyIdentity`、#2 ReviewRequest 引用、#4 认证器变更的 `undetermined`、#5 `legacy-undetermined`）是**完全没有**实现，其余 7 条是部分实现。其中最该先补的是 **#3**（C 的返回只要求 Judge，不要求独立 Review——这正好是设计里“不得自己签发 return receipt”的那条）与 **#7**（obligation 拒绝路径会不断产生 revision，与设计要求的活性相反）；**#11**（试点）不是代码工作，需要真实使用数据。
+
+本审计只是阅读与实测，未修改代码、未提交。
+
+## 21. 审计后的第一批修复：#3 已实施、#7 已实测（2026-10-18）
+
+按第 20 节自己列出的优先级，先补 **#3**（返回只认 Judge）并**实测 #7**（失败的 seal 与孤儿 revision）。
+
+### #3 已实施：C 的返回要求它自己的独立审查
+
+| 事实 | 实现 |
+|---|---|
+| C 的认证是它自己的三道门，不是一道 | `readCorrectiveFacts` 新增 `reviewedApproved`：读 `review.json`，要求 `status === 'approved'` **且**用共享的 `bindsToRevision` 绑定到 C 的当前 revision（身份来自**已有的一次读** `currentRevisionIdentityFrom`，不二次读那个非原子指针） |
+| 缺的是哪一步就说哪一步 | 新增具名 reason `corrective_not_reviewed`（有 Judge PASS 但没有绑定的独立审查批准），road 指向 `kata-cli review --change <C>`；原有的 `corrective_not_certified` 仍负责“连 Judge 都没有” |
+| 写回执的那道门也拦 | `recordDependencyReturn` 在写回执前先拒绝，错误信息点名“its result is not yet independent of its author”，并给出要跑的命令 |
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **374 文件 / 2317 用例全绿**；`check:wiring` 既有 11 条不变。**反证**：把读侧判断或写侧判断任一处关掉，`a-blocked-task-cannot-cross-its-gate.test.ts` 的对应用例立刻转红（两次分别验证），恢复即绿。
+
+**这次改动暴露的两件事（都已修，值得记录）**：
+
+1. **两个既有 fixture 把“已 Judge”当成“已认证”**：`a-blocked-task-cannot-cross-its-gate` 与 `a-discharged-class-is-falsifiable` 的 fixture 只写 `judge.json`。门禁变严后它们转红——这不是测试坏了，而是它们**一直在建模一个工作流到不了的状态**（`kata-cli review` 本应在 judge 之前）。两个 fixture 都补上了绑定的批准审查记录。
+2. **我自己写的 `review as never` 被仓库自己的守卫抓住**（`no-type-escapes-in-source`）。按仓库规则改成按 `VerdictBinding & { status?: string }` 读取——修类型而不是加断言。
+
+### #7 已实测：失败的 seal 会推进 current 指针，但不会无限重封
+
+| 问题 | 实测（真实 fixture + `runCommand`，`/tmp` 内） |
+|---|---|
+| 失败 seal 会发布孤儿 revision 吗？ | **会**：被 obligation 门拒绝后 `current-revision.json` 从已认证的 revision 变成新铸的、**没有任何 seal 证据**的 revision（`certified=revision-eb9ce6… now=revision-ba8da4… advanced=true`） |
+| 会无限 re-seal 吗？ | **不会**：连续三次**内容不变**的拒绝，revision 计数 `[1,2,2,2]`、指针三次相同——第二次起**复用**同一 revision。设计担心的“同一拒绝重复执行生成无限 re-seal”在危害意义上不成立 |
+| 未认证的 current revision 能被别的门放行吗？ | **未证实**：`verify` 在探针里因 wiki closure 缺失先拒绝，`review --preflight` 因信任边界先拒绝，所以“读者会因缺证据而拒绝它”这个假设**没有得到验证**，不能当作无害的理由 |
+
+**修复成本与建议**：真正的修法是把“铸 revision”与“发布指针”拆开（`revision.ts:188,236` 在铸的时候就写指针），而那个文件带着明确的锁纪律注释（review commit 会在锁内重读指针并拒绝描述不一致的写入），改动面广、测试面大。我的建议是**先记录、不现在改**：危害形式（无限重封）实测不成立，而“指针 = 内容快照、不是认证”这一定位与其它 reader 的证据要求并不冲突——但上面第三行**未证实**，所以这条建议是**有条件的**：若要彻底消除，应作为独立一片做，并同时给出“未认证 current revision 各门行为的场景表”。
+
+### 第 20 节其余缺口未变
+
+#1 `dependencyIdentity`、#2 ReviewRequest 依赖引用、#4 认证器变更的 `undetermined`、#5 `legacy-undetermined`、#6 blocked 年龄、#8 跨记录写入的“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点，均**仍未实施**。
+
+本批已提交（未推送）。

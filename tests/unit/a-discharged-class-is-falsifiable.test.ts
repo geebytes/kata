@@ -73,6 +73,16 @@ async function fixture(name: string, options: { rounds?: Array<{ at: string; cla
     await addKataRelation({ root, from: { type: 'task', id: 'delivery' }, to: { type: 'task', id: 'corrective' }, type: 'blocked_by', reason: 'the class' });
     if (options.certifyCorrective) {
         const { revision } = await createTaskRevisionIfChanged({ root, taskId: 'corrective', ownedPaths: ['src/a.ts'] });
+        // The corrective action's own review as well: the return gate reads the certification it actually has.
+        write(root, '.kata/tasks/corrective/review.json', `${JSON.stringify({
+            revisionId: revision.id,
+            manifestHash: revision.manifestHash,
+            reviewedRevisionId: revision.id,
+            recordedAt: '2026-01-01T00:00:00.000Z',
+            reviewEvidence: 'the independent round this corrective action was accepted on',
+            findings: [],
+            status: 'approved',
+        })}\n`);
         write(root, '.kata/tasks/corrective/judge.json', `${JSON.stringify({
             taskId: 'corrective', result: 'PASS', revisionId: revision.id, acceptance: [{ id: 'AC-1', result: 'PASS' }],
         })}\n`);

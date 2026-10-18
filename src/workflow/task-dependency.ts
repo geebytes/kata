@@ -1,10 +1,11 @@
 import { readValidatedOptional } from '../core/schema.js';
-import { dependenciesPath, judgePath } from '../core/layout.js';
+import { dependenciesPath, judgePath, reviewPath } from '../core/layout.js';
 import { readKataRelations, type KataRelationWithLegacyId } from '../core/relations.js';
 import { readCurrentStateOr, type StateRead } from '../core/state.js';
 import { withRepositoryArtefactLock } from '../core/locks.js';
 import { assertValidTaskId } from '../core/ids.js';
 import { computeManifestHash, readCurrentTaskRevisionState } from './revision.js';
+import { bindsToRevision, currentRevisionIdentityFrom, type VerdictBinding } from './verdict-binding.js';
 
 /**
  * **The one decision about a task-to-task blocking edge, and the one gate every entry asks.**
@@ -57,6 +58,14 @@ export type CorrectiveFacts = {
     revisionId: string | null;
     /** `null` when the judge record could not be read; `false` when it read and does not certify this revision. */
     judgedPass: boolean;
+    /**
+     * **Whether the corrective action was independently reviewed, bound to the same revision.**
+     *
+     * Its own gates are three — verify, review, judge — and reading only the judge let a task that had never been
+     * independently reviewed sign the receipt that unblocks another change. The binding rule is the shared one
+     * (`bindsToRevision`), so "does this approval still speak for that content" has one answer in the repository.
+     */
+    reviewedApproved: boolean;
     /** The hash of the corrective revision's declared surface as it stands in *this* tree; `null` when it could not be hashed. */
     integratedContentHash: string | null;
 };
@@ -112,6 +121,16 @@ function blocker(input: {
 
 function statusRoad(taskId: string): string {
     return `kata-cli status --change ${taskId}`;
+}
+
+/**
+ * The road for a corrective action that has not been independently reviewed yet.
+ *
+ * It names the review of *that* task rather than its status: the missing step is a review round, and an operator sent to
+ * `status` would read a state they already know without learning what to run.
+ */
+function reviewRoad(taskId: string): string {
+    return `kata-cli review --change ${taskId} (after \`kata-cli ledger run --change ${taskId}\`)`;
 }
 
 function recordRoad(taskId: string, edge: DependencyEdge): string | null {
@@ -183,6 +202,21 @@ export function decideTaskDependencies(input: {
                 reason: 'corrective_not_certified',
                 detail: `The corrective task '${edge.correctiveTaskId}' has revision '${facts.revisionId}' but no passing judge record bound to it, so its result is not independent.`,
                 road: statusRoad(edge.correctiveTaskId),
+            }));
+            continue;
+        }
+        // **A judged corrective action is not yet an accepted one.** Its own review is the step that makes its result
+        // independent of its author, and without it the receipt unblocking this change would rest on the author's own
+        // conclusion — the shape the design refuses in as many words. Named as its own reason so the road is the review
+        // rather than the judge the task already has.
+        if (!facts.reviewedApproved) {
+            everyEdgeRevalidated = false;
+            blockers.push(blocker({
+                edge,
+                state: 'pending',
+                reason: 'corrective_not_reviewed',
+                detail: `The corrective task '${edge.correctiveTaskId}' has a passing judge record for revision '${facts.revisionId}' but no approved independent review bound to it, so nothing yet says the repair was accepted by anyone but its author.`,
+                road: reviewRoad(edge.correctiveTaskId),
             }));
             continue;
         }
@@ -370,12 +404,23 @@ async function readCorrectiveFacts(root: string, taskId: string): Promise<Correc
     const revision = revisionRead.kind === 'current' ? revisionRead.revision : null;
 
     let judgedPass = false;
+    let reviewedApproved = false;
     if (revision) {
         try {
             const judge = await readValidatedOptional<{ result?: string; revisionId?: string }>('judge-result', judgePath(root, taskId));
             judgedPass = judge?.result === 'PASS' && judge.revisionId === revision.id;
         } catch {
             judgedPass = false;
+        }
+        try {
+            // The identity comes from the read already in hand, never from a second read of a pointer written non-atomically.
+            const identity = await currentRevisionIdentityFrom(revisionRead, root, taskId);
+            const review = await readValidatedOptional<VerdictBinding & { status?: string }>('review', reviewPath(root, taskId));
+            reviewedApproved = review?.status === 'approved' && bindsToRevision(review, identity);
+        } catch {
+            // A review record that cannot be read is not an approval. It is also not reported as one: the two facts are
+            // distinct below, and a damaged record leaves the task where a missing one does — blocked, with the road.
+            reviewedApproved = false;
         }
     }
 
@@ -395,6 +440,7 @@ async function readCorrectiveFacts(root: string, taskId: string): Promise<Correc
         revisionReadState: revisionRead.kind === 'unreadable' ? 'unreadable' : revisionRead.kind === 'absent' ? 'absent' : 'current',
         revisionId: revision?.id ?? null,
         judgedPass,
+        reviewedApproved,
         integratedContentHash,
     };
 }
@@ -481,6 +527,13 @@ export async function recordDependencyReturn(input: {
     const facts = await readCorrectiveFacts(root, edge.correctiveTaskId);
     if (facts.revisionId === null || facts.revisionReadState !== 'current') {
         throw new Error(`Cannot record a return for edge '${relationId}': the corrective task '${edge.correctiveTaskId}' has no readable accepted revision.`);
+    }
+    if (!facts.reviewedApproved) {
+        throw new Error(
+            `The corrective task '${edge.correctiveTaskId}' has a passing judge record but no approved independent review bound to `
+            + `revision '${facts.revisionId ?? '<none>'}', so its result is not yet independent of its author and cannot sign the receipt `
+            + `that unblocks '${input.taskId}'. Review it first: ${reviewRoad(edge.correctiveTaskId)}.`,
+        );
     }
     if (!facts.judgedPass) {
         throw new Error(`Cannot record a return for edge '${relationId}': the corrective task '${edge.correctiveTaskId}' stands at '${facts.revisionId}' without a passing judge record bound to it, so there is nothing independent to return.`);

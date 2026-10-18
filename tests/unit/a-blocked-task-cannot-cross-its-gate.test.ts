@@ -55,7 +55,7 @@ async function task(root: string, id: string, ownedPaths: string[]): Promise<voi
 }
 
 /** A corrective task that has been independently certified: an accepted revision and a Judge pass bound to it. */
-async function certify(root: string, id: string, ownedPaths: string[]): Promise<string> {
+async function certify(root: string, id: string, ownedPaths: string[], options: { review?: boolean } = {}): Promise<string> {
     const { revision } = await createTaskRevisionIfChanged({ root, taskId: id, ownedPaths });
     write(root, `.kata/tasks/${id}/judge.json`, `${JSON.stringify({
         taskId: id,
@@ -63,16 +63,29 @@ async function certify(root: string, id: string, ownedPaths: string[]): Promise<
         revisionId: revision.id,
         acceptance: [{ id: 'AC-1', result: 'PASS' }],
     }, null, 2)}\n`);
+    // **And the review, because a judged task is not yet an accepted one.** The gate reads both, so a fixture that wrote
+    // only the judge record would be modelling a state the workflow cannot reach: `kata-cli review` is what precedes it.
+    // The one case that needs that unreachable state asks for it explicitly.
+    if (options.review === false) return revision.id;
+    write(root, `.kata/tasks/${id}/review.json`, `${JSON.stringify({
+        revisionId: revision.id,
+        manifestHash: revision.manifestHash,
+        reviewedRevisionId: revision.id,
+        recordedAt: '2026-01-01T00:00:00.000Z',
+        reviewEvidence: 'the independent round this corrective action was accepted on',
+        findings: [],
+        status: 'approved',
+    }, null, 2)}\n`);
     return revision.id;
 }
 
-async function fixture(name: string, options: { certifyCorrective?: boolean } = {}): Promise<{ root: string; relationId: string }> {
+async function fixture(name: string, options: { certifyCorrective?: boolean; reviewCorrective?: boolean } = {}): Promise<{ root: string; relationId: string }> {
     const root = mkdtempSync(join(tmpdir(), `kata-dependency-${name}-`));
     roots.push(root);
     await initLayout(root);
     await task(root, 'dependent', ['src/dependent.ts']);
     await task(root, 'corrective', ['src/corrective.ts']);
-    if (options.certifyCorrective) await certify(root, 'corrective', ['src/corrective.ts']);
+    if (options.certifyCorrective) await certify(root, 'corrective', ['src/corrective.ts'], { review: options.reviewCorrective ?? true });
     const graph = await addKataRelation({
         root,
         from: { type: 'task', id: 'dependent' },
@@ -96,6 +109,7 @@ const certified: CorrectiveFacts = {
     revisionReadState: 'current',
     revisionId: 'rev-c',
     judgedPass: true,
+    reviewedApproved: true,
     integratedContentHash: 'hash-1',
 };
 const recordedReturn = {
@@ -319,6 +333,40 @@ describe('a damaged return record is not an empty one', () => {
         expect(decision.blockers[0]?.reason).toBe('return_record_unreadable');
         const summary = summarizeTaskDependency(decision);
         expect((summary.blockers as Array<{ road: string | null }>)[0]?.road).toMatch(/dependency status/u);
+    });
+});
+
+describe('a corrective action is returned only after it was independently reviewed', () => {
+    it('refuses a return whose corrective action was judged but never reviewed', async () => {
+        // **C's certification is its own three gates, not one of them.** The return gate used to read only `judge.json`, so a
+        // task that reached a Judge PASS without an approved independent review could sign the receipt that unblocks another
+        // change — which is the design's own sentence ("C 先独立认证（Verify/Review/Judge）… 不得由 C 自称'我已修好'签发自己的
+        // return receipt") with one third of it missing.
+        const { root, relationId } = await fixture('judged-not-reviewed', { certifyCorrective: true, reviewCorrective: false });
+
+        const decision = await readTaskDependency(root, 'dependent');
+        expect(decision.state).toBe('pending');
+        expect(decision.blockers[0]?.reason).toBe('corrective_not_reviewed');
+        // The road names the review, because that is the step that is missing — not the judge the task already has.
+        expect(decision.blockers[0]?.road).toContain('corrective');
+
+        await expect(recordDependencyReturn({ root, taskId: 'dependent', relationId }))
+            .rejects.toThrow(/independent review/u);
+
+        // And with the review approved against C's current revision, the same return is accepted.
+        const revision = JSON.parse(readFileSync(join(root, '.kata/tasks/corrective/current-revision.json'), 'utf8')) as { id: string; manifestHash: string };
+        write(root, '.kata/tasks/corrective/review.json', `${JSON.stringify({
+            revisionId: revision.id,
+            manifestHash: revision.manifestHash,
+            reviewedRevisionId: revision.id,
+            recordedAt: '2026-01-02T00:00:00.000Z',
+            reviewEvidence: 'the independent round the corrective action was accepted on',
+            findings: [],
+            status: 'approved',
+        })}\n`);
+
+        await recordDependencyReturn({ root, taskId: 'dependent', relationId });
+        expect((await readTaskDependency(root, 'dependent')).state).toBe('ready_to_revalidate');
     });
 });
 
