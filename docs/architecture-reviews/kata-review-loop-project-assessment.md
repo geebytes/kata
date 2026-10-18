@@ -686,3 +686,23 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **过程中被仓库自己的守卫抓了一次**：我在新模块里顺手导出 `closesFinding` 却没有调用者，`check:wiring` 立刻把 findings 从 11 变成 12（“只在测试里活着”正是它抓的类别），于是删掉——`isOpenFinding`/`CLOSING_DISPOSITIONS` 保持 ladder 的唯一答案，本模块不对“什么算关闭”发表第二意见。
 
 **剩余**：#11 PDSA 试点（需要真实使用数据，不是代码工作）；#7 已实测并有条件建议不改。
+
+## 29. #7 的测量被自己推翻两处，并补上容器性质的守卫（2026-10-18）
+
+#7（“失败的 seal 会发布孤儿 revision”）此前是我**有条件建议不改**的唯一一条，条件是“未认证的 current revision 是否会被别的门拒绝——**未证实**”。本轮把那个条件测掉了，同时**推翻了我自己先前两处说法**：
+
+| 我先前说 | 实测 |
+|---|---|
+| “被 obligation 门拒绝后指针前进” | **不对，或至少不完整**：拒绝来自 **seal 自己的检查失败**时指针同样前进（把 obligation 记录换成一份 approvals/别的形状、甚至完全不写 obligation，行为一致）。推进是**结构性**的——revision 在 mint 时就写入指针，之后任何一步失败都不会回滚。我先前引用的 `closure_obligation_unmet` 是另一个 change 的拒绝，被我错误地当成同一条证据 |
+| （隐含）“这个危害已经在真实路径上出现” | **需要前提**：从 `intake` 阶段 build 根本不允许运行（`Build cannot run from intake`），**连 revision 都不会铸**，所以那个 fixture 状态的“指针前进=false”与危害无关。要复现必须先 `design`（`design` 移动的是状态记录，`task.json` 的 `phase` 仍是 `intake`，这也是我第一次读错的原因） |
+
+**新守卫（`tests/unit/a-refused-seal-cannot-reach-distill.test.ts`，2 例）**：
+
+1. **基线是绿的**（证据绑定当前 revision + 审查已清 + Judge PASS，`assertDistillGates` 通过）→ 一次**真的失败**的 seal（检查 `exit 1`，不是空 checks）→ **断言指针确实前进**（把危害本身写成断言，避免以后靠叙述）→ 之后三道门**拒绝**：`judge` 变 `stale_judgement`（裁定绑定的是 seal 真正认证过的那个 revision）、`freshEvidence` 为 `null`，`assertDistillGates` 的拒绝同时点名 `stale_judgement` 与 “no fresh passing test evidence is recorded for the current revision”。
+2. **被认证的 revision 不受损**：仍在 `revisions/` 里，`judge.json` 仍然点名它——拒绝的代价是重新 seal，而不是丢掉已认证的工作。
+
+**结论（#7 的处置）**：危害真实但**范围有限**——半成品会被发布成 *current*，而**没有任何东西可以立足于它**；容器来自内容绑定（证据与裁定都绑在 seal 真正认证的那个 revision 上），不是来自 closure 门。因此“作为记录缺口保留、不现在改”这条建议**成立，且条件已实测**；若要彻底消除，修法仍是把 `revision.ts` 的“铸”与“发布指针”拆开（那个文件带锁纪律，属独立一片）。
+
+**过程中的自我纠错记录（三处，都已修）**：① 第一版探针没跑 `design`，读到的“指针不前进”是阶段拒绝的假象；② 第一版守卫 fixture 把证据文件命名成 `e1.json`，而记录器只读 `<taskId>-*.json`，于是“没有证据”也是假象（这个坑与我此前在 §14 记的“打印的 road 不成立”同类：**读不到**被当成了**不存在**）；③ `revisions/` 目录里的条目带 `.json` 后缀，第一版断言漏了后缀。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **380 文件 / 2350 用例全绿**（本片新增 2 例）；`check:wiring` 既有 11 条不变。
