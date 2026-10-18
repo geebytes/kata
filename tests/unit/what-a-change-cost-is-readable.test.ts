@@ -169,3 +169,40 @@ describe('the class view, where the inequality gets its numbers', () => {
         expect(Array.isArray(view.unmeasured)).toBe(true);
     });
 });
+
+describe('a board can see why a change is blocked, and for how long', () => {
+    it('publishes the blocker\'s own reason, the road the refusal prints, and the age from the edge', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'kata-metrics-blocked-'));
+        roots.push(root);
+        await initLayout(root);
+        write(root, 'src/a.ts', 'a\n');
+        await createTask({ root, id: 'blocked', title: 'b', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
+        await createTask({ root, id: 'corrective', title: 'c', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
+        const graph = await addKataRelation({
+            root,
+            from: { type: 'task', id: 'blocked' },
+            to: { type: 'task', id: 'corrective' },
+            type: 'blocked_by',
+            reason: 'the mechanism this change depends on is not repaired yet',
+        });
+        const declaredAt = graph.relations[0]!.createdAt;
+
+        const metrics = await readChangeMetrics(root, 'blocked');
+        expect(metrics.dependency).toBe('pending');
+        expect(metrics.blocked?.reason).toBe('corrective_not_certified');
+        expect(metrics.blocked?.correctiveTaskId).toBe('corrective');
+        expect(metrics.blocked?.road).toContain('corrective');
+        // The age is measured from the edge's own declaration, not from the moment of reading.
+        expect(metrics.blocked?.since).toBe(declaredAt);
+        expect(metrics.blocked?.ageMs).toBeGreaterThanOrEqual(0);
+
+        // And the CLI publishes the same fact, since it is the same reading.
+        const view = await runMetricsCommand(['--change', 'blocked', '--root', root]) as { blocked?: { reason?: string } };
+        expect(view.blocked?.reason).toBe('corrective_not_certified');
+
+        // A change with no edge publishes `null` rather than an empty blocker — "not blocked" and "blocked for no reason"
+        // are different facts, and a board that showed the second for the first would be reporting a dependency nobody has.
+        await createTask({ root, id: 'free', title: 'f', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
+        expect((await readChangeMetrics(root, 'free')).blocked).toBeNull();
+    });
+});

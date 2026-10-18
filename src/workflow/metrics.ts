@@ -50,6 +50,15 @@ export type ChangeMetrics = {
     phase: string | null;
     completion: string;
     dependency: string;
+    /**
+     * **Why a change is blocked, and for how long — the two facts the board asks for that a state name cannot answer.**
+     *
+     * `dependency` alone says `pending`; an operator reading a board needs to know which corrective action, why, and since
+     * when. The reason is the one the gate refuses with, the road is the one the refusal prints, and the age is measured
+     * from the edge's own `createdAt` — the moment the dependency was declared, which is the earliest recorded fact about
+     * it. `null` when the change is not blocked, or when the edge carries no readable timestamp (named in `unmeasured`).
+     */
+    blocked: { reason: string; correctiveTaskId: string; road: string | null; since: string | null; ageMs: number | null } | null;
     correctiveAction: { declared: boolean; classKey?: string; discharged?: boolean };
     revisions: { count: number };
     rounds: {
@@ -124,11 +133,26 @@ export async function readChangeMetrics(root: string, taskId: string): Promise<C
         readCorrectiveActionStatus(root, taskId),
     ]);
 
+    // **The blocking fact, folded from the decision the gates read** — never re-derived here: the reason is the blocker's
+    // own reason and the road is the road the refusal prints, so a board cannot describe a block differently from the gate
+    // that enforces it. The age starts at the edge's declaration, the earliest recorded moment of the dependency.
+    const blocker = dependency.blockers[0] ?? null;
+    const blockingEdge = blocker === null ? null : dependency.edges.find((edge) => edge.relationId === blocker.relationId) ?? null;
+    const blockedSince = blockingEdge?.declaredAt ?? null;
+    const now = new Date().toISOString();
+
     return {
         taskId,
         phase: events.at(-1)?.to ?? null,
         completion: completion.state,
         dependency: dependency.state,
+        blocked: blocker === null ? null : {
+            reason: blocker.reason,
+            correctiveTaskId: blocker.correctiveTaskId,
+            road: blocker.road,
+            since: blockedSince,
+            ageMs: blockedSince === null ? null : elapsedMs(blockedSince, now),
+        },
         correctiveAction: corrective.readState === 'usable'
             ? { declared: true, classKey: corrective.declaration?.classKey, discharged: corrective.discharged }
             : { declared: false },
@@ -150,6 +174,11 @@ export async function readChangeMetrics(root: string, taskId: string): Promise<C
             'author and reviewer active time (kata sees recorded events, not attention)',
             'model tokens and tool calls (kata makes no model calls)',
             'check execution time (recorded per evidence file, not aggregated here)',
+            // **A blocked change whose edge carries no timestamp is named, not silently aged from zero.** The same rule the
+            // rounds' unreadable rows follow: an unplaceable fact is published as unknown rather than as a number.
+            ...(blocker !== null && blockedSince === null
+                ? ['how long this change has been blocked: the edge record carries no readable timestamp']
+                : []),
         ],
     };
 }

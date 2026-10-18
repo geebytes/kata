@@ -530,3 +530,26 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **实测证据**：`tsc --noEmit` 退出 0；全量 **374 文件 / 2318 用例全绿**；`check:wiring` 既有 11 条不变。**反证**：把该字段从构造处删掉，`review-request-is-handed-over.test.ts` 的新用例立刻转红，恢复即绿。用例同时断言：无边时字段缺席、有边时 `state === 'pending'`、reason 就是门禁拒绝时用的那个词（`corrective_not_certified`）、road 指向那个 C、且 `entries.seal/judge` 不是 `permitted`。
 
 **下一批候选**（仍未实施，按第 20 节）：#4（C 若改动认证器/reviewer 入口 → 批准资格 `undetermined`）、#6（blocked 原因/年龄）、#5（`legacy-undetermined`）、#1（`dependencyIdentity` 绑定进 D 的结论）、#8/#9/#10/#11。
+
+## 23. 审计后的第三批：#6 已实施，#4 需要一次设计决定（2026-10-18）
+
+**#6（§6.5 看板要 blocked 原因/年龄）已实施。** `ChangeMetrics` 新增 `blocked`：`reason`（**门禁拒绝时用的同一个词**）、`correctiveTaskId`、`road`（**拒绝信息打印的同一条路**）、`since`（边的 `createdAt`）、`ageMs`（从声明时刻算起）；无依赖边时为 `null`（“未阻塞”与“阻塞但没原因”是两件事）；边没有可读时间戳时**不假装**为零，而是把“阻塞了多久”写进 `unmeasured` 具名发布。`DependencyEdge` 因此带上 `declaredAt`（来自关系记录的 `createdAt`）。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **374 文件 / 2319 用例全绿**；`check:wiring` 既有 11 条不变。**反证**：把年龄改成“从读取时刻算起”，新用例连同两条既有用例一起转红，恢复即绿。
+
+**#4（C 若改动认证器/reviewer 入口 → 批准资格 `undetermined`）没有实施，而且不该由我随手实现。** 原因是实测出来的：
+
+- 仓库**已有**“仪器面”概念（`RevisionIdentity.instrumentManifestHash`，由 `task.instruments[]` 声明），看上去正好是这条规则的现成来源；
+- 但 `kata-cli` 的 30+ 个任务里**声明 `instruments` 的有 0 个**。也就是说按这条现成路径实现，规则对当前所有任务**恒为假**——等于什么都没拦。
+
+所以真正要决定的是“什么算认证器/reviewer 入口”，三条路各有代价：
+
+| 路线 | 代价 / 风险 |
+|---|---|
+| A 用 `instruments[]` 声明（要求 C 自己声明） | 机制现成、零新概念；但**危险恰好在这里**：一个改认证器的 C 不会主动声明，规则靠被约束者自报，等于没有 |
+| B 硬编码一组路径（`src/quality/**`、`src/workflow/distill-gates.ts`、`.pi/agents/kata-reviewer.md`、`.agents/skills/kata-review/**`…） | 立刻可用、可测；但这是我**自己发明策略**，且每次新增认证入口都要人记得改表（本仓库反复出现的漂移形状） |
+| C 从“认证路径实际读什么”推导（导入闭包 / CodeGraph） | 唯一不会漂移的一条，也最贵；需要先定义“认证路径”的根集合，而这本身又回到 B 的问题 |
+
+**我的建议**：先做 B 的**可测最小版本**并把这份清单写进设计文档（作为被审对象，而不是藏在代码里），同时把“清单本身要有仪器”列为验收条件；等 CodeGraph 的候选发现（`discoverCodeGraphCandidates` 已有）能承担根集合推导时，再升级到 C。**但这属于改变门禁强度的策略选择，我等你选路线，不自己定。**
+
+**其余未实施**（第 20 节）：#1 `dependencyIdentity`、#5 `legacy-undetermined`、#8 跨记录“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。

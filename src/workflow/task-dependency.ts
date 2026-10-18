@@ -48,6 +48,12 @@ export type DependencyEdge = {
     relationType: string;
     correctiveTaskId: string;
     reason?: string;
+    /**
+     * When the edge was declared — the earliest recorded fact about this dependency, and therefore the moment its age is
+     * measured from. Absent on a v1 edge whose record carries no timestamp, which is reported as unmeasured rather than
+     * silently treated as "just now".
+     */
+    declaredAt?: string;
 };
 
 export type CorrectiveFacts = {
@@ -395,6 +401,7 @@ export function dependencyEdgesFor(relations: readonly KataRelationWithLegacyId[
             relationType: relation.type,
             correctiveTaskId: relation.to.id,
             ...(relation.reason === undefined ? {} : { reason: relation.reason }),
+            ...(typeof relation.createdAt === 'string' ? { declaredAt: relation.createdAt } : {}),
         }));
 }
 
