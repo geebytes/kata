@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/corrective-action.schema.json",
+  "title": "Corrective action declaration",
+  "description": "What a mechanism-correcting task declares it discharges: the class contract a root-cause round wrote, the change it was reported against, and the owner. The class vocabulary is the one the review loop already uses (`ClosureObligation`), so this record cannot become a second definition of the same class.",
+  "type": "object",
+  "required": ["taskId", "classKey", "sourceChangeId", "owner", "obligation", "declaredAt", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "type": "string", "minLength": 1 },
+    "classKey": { "type": "string", "minLength": 1 },
+    "sourceChangeId": { "type": "string", "minLength": 1 },
+    "sourceFindingIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+    "owner": { "type": "string", "minLength": 1 },
+    "declaredAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "note": { "type": "string", "minLength": 1 },
+    "obligation": {
+      "type": "object",
+      "required": ["states", "sourceOfTruth", "inventory", "invariant", "repairSurface", "effectivenessTest", "ifRecursAgain"],
+      "additionalProperties": false,
+      "properties": {
+        "states": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+        "sourceOfTruth": { "type": "string", "minLength": 1 },
+        "inventory": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+        "invariant": { "type": "string", "minLength": 1 },
+        "repairSurface": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+        "effectivenessTest": { "type": "string", "minLength": 1 },
+        "ifRecursAgain": { "type": "string", "enum": ["rewrite_mechanism", "waive_with_owner", "abandon_change"] }
+      }
+    }
+  }
+}

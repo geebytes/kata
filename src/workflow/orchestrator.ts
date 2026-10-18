@@ -53,6 +53,7 @@ import { acceptanceContractHashOf, readTask, UnreadableTaskRecord } from '../cor
 import type { CheckProgressEvent } from '../quality/evidence.js';
 import { buildChangeRecord, writeChangeRecord } from '../quality/change-record.js';
 import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, reviewRequestPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
+import { assertDependencyAllowsEntry, dependencyRefusal, readTaskDependency, type GovernedEntry } from './task-dependency.js';
 
 export type KataCommand = 'open' | 'design' | 'build' | 'review' | 'judge' | 'verify' | 'archive' | 'hotfix' | 'tweak';
 
@@ -217,6 +218,17 @@ export async function runCommand(
     options: CommandOptions = {},
 ): Promise<CommandResult> {
     assertValidTaskId(taskId);
+    /**
+     * **A blocking dependency stops every entry that would move this task forward, and it is asked here.**
+     *
+     * Here rather than in `src/cli/workflow.ts`, because the CLI is one caller of `runCommand` and a gate that only the
+     * CLI asks is bypassed by the next caller — this repository has measured that shape more than once. The entry is the
+     * *certification* the command performs, not the command's name: `build` without `--seal` is the repair entry and moves
+     * nothing, and `review --result-file` records a conclusion inside a boundary that was already crossed, so neither is
+     * refused (refusing the second would strand a task that entered review before the edge was written).
+     */
+    const governedEntry = governedEntryFor(command, options);
+    if (governedEntry) await assertDependencyAllowsEntry(root, taskId, governedEntry);
     switch (command) {
         case 'open':
             return cmdOpen(taskId, root, options);
@@ -435,6 +447,40 @@ async function acknowledgeCometOpenIfRequired(root: string, taskId: string): Pro
  * running, and when the line was written. A failure to write it never fails a seal — the log is an observation, and a
  * seal that died because its log was unwritable would be worse than one nobody can watch.
  */
+/**
+ * Which certification, if any, this command performs — the question the dependency gate asks.
+ *
+ * `null` means "this invocation certifies nothing", which is not the same as "there is no gate": a task can be blocked and
+ * still be repaired, inspected and re-tested, because those are the commands that produce the content the re-validation
+ * needs.
+ */
+export function governedEntryFor(command: KataCommand, options: CommandOptions): GovernedEntry | null {
+    if (command === 'build') return (options.seal ?? true) ? 'seal' : null;
+    if (command === 'verify') return 'verify';
+    if (command === 'review') return options.reviewResultFile === undefined ? 'review' : null;
+    if (command === 'judge') return 'judge';
+    if (command === 'archive') return 'archive';
+    return null;
+}
+
+/**
+ * The refusal a *trust boundary approval* has to honour.
+ *
+ * `gate approve` is where a human authorizes the crossing, so a dependency that is not returned must not be clearable by
+ * approving the boundary in front of it: that would make the recorded human decision stand in for evidence nobody has.
+ */
+export async function assertDependencyAllowsApproval(root: string, taskId: string, boundary: string): Promise<void> {
+    const entry: GovernedEntry | null = boundary === 'implementation_gate' ? 'seal'
+        : boundary === 'review_gate' ? 'review'
+            : boundary === 'judge_gate' ? 'judge'
+                : boundary === 'archive_gate' ? 'archive'
+                    : null;
+    if (!entry) return;
+    const decision = await readTaskDependency(root, taskId);
+    const refusal = dependencyRefusal(decision, entry);
+    if (refusal) throw new Error(refusal.message);
+}
+
 export async function sealProgressWriter(
     root: string,
     taskId: string,
@@ -726,8 +772,14 @@ async function cmdBuild(
     const declarationRisk = committedReading === 'unavailable'
         ? { committedOutsideDeclaration: [] as string[], committedReading }
         : { committedOutsideDeclaration: undeclaredCommittedChanges, committedReading };
-    // Reaching here means every blocker was absent; a non-strict task has no waivers to persist.
-    if (requiresMatrix(task.workflowProfile)) await writeWaivers(root, taskId, waivers);
+    // Reaching here means every blocker was absent.
+    //
+    // **Persisted on every profile, when there are decisions to persist.** This was gated by `requiresMatrix`, which made the
+    // one road a refusal prints for an unverifiable obligation ("record a decision naming `obligation:<class>`") a road the
+    // std profile could walk once and never again: the decision was honored by the seal that supplied it and forgotten by the
+    // next one, which then refused with the same sentence (`gate-r10-F3`). A decision is a record, and a record that is only
+    // honored while the flag is repeated is not recorded — it is supplied.
+    if (waivers.length > 0) await writeWaivers(root, taskId, waivers);
 
     let sandbox;
     try {
@@ -1096,6 +1148,9 @@ async function cmdBuild(
             movedPaths,
             baselineDigests,
             currentDigests: revision.pathDigests ?? {},
+            // **The operator's recorded decisions.** An obligation the mechanism cannot verify is decided here rather than
+            // blocking every future seal: the decision is published back as a recorded gap, never as a satisfied contract.
+            waivers,
         });
         const unmet = obligationChecks.flatMap((check) => check.unmet.map((detail) => `${check.defectClass}: ${detail}`));
         if (unmet.length > 0) {

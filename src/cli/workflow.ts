@@ -24,7 +24,8 @@ import {
     type UserChoiceBoundary,
 } from '../workflow/user-choice-gate.js';
 import { inspectGitFlow, toGitFlowState, type GitFlowBranchKind } from '../core/git-flow.js';
-import { runCommand } from '../workflow/orchestrator.js';
+import { assertDependencyAllowsApproval, runCommand } from '../workflow/orchestrator.js';
+import { collectReviewPreflight } from '../workflow/review-preflight.js';
 import {
     nextActionForTask,
     roleForPhase,
@@ -128,8 +129,36 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     // deadlock, immediately after the re-entry itself was fixed: verify → approve → review --confirm-host-model worked, and
     // the round's findings could not be written down. The discriminator is what the invocation *does*, not the phase it
     // runs in: the invocation that opens the phase crosses the boundary, the one that closes it does not.
+    // **The pre-dispatch check runs before the boundary, because the boundary is consumed by crossing it.** A refusal
+    // after `requireUserChoiceGate` would spend an approved gate on an invocation that produced nothing — the deadlock this
+    // repository has already paid for twice. It reads only, so it costs nothing to ask, and `--preflight` is the same
+    // derivation an author runs while composing the brief to the reviewer.
+    const preflightRequested = command === 'review' && switchPresent(argv, '--preflight');
+    if (preflightRequested) {
+        // A report, not a refusal: the author asked what the state is, and nothing here consumes a gate or a phase.
+        const preflight = await collectReviewPreflight({ root, taskId: change });
+        return { command: 'review', phase: inputPhase, success: preflight.ok, ...preflight };
+    }
+    // **A brief that fails the check is refused here, before the boundary is consumed — and only that case.**
+    //
+    // The narrowing is deliberate and was measured: a task that has not run `ledger run` yet is *between* steps, and the
+    // phase entry has nothing to hand over, so refusing it would break the sequence the ladder prints (`verify` → `gate
+    // approve` → `review`). What must not be spent is a reviewer: a persisted brief that answers another revision, names
+    // paths that do not exist, or owes a batch it was not told about cannot produce an acceptable result, and the round
+    // that discovers this afterwards is the most expensive step in the workflow wasted.
+    if (command === 'review' && !recordsAConclusion(argv)) {
+        const preflight = await collectReviewPreflight({ root, taskId: change });
+        if (preflight.briefState === 'usable' && !preflight.ok) {
+            throw new Error(
+                `Cannot dispatch a review round for '${change}': ${preflight.blockers.length} pre-dispatch problem(s).\n`
+                + `${preflight.blockers.map((entry) => `- [${entry.code}] ${entry.message}${entry.road ? ` Next: ${entry.road}` : ''}`).join('\n')}`,
+            );
+        }
+    }
     const boundary = boundaryForCommand(command, inputPhase, { recording: recordsAConclusion(argv) });
-    if (boundary) await requireUserChoiceGate({ root, taskId: change, boundary });
+    // **The admitted gate is kept, because consuming re-asks otherwise** (see `consumeUserChoiceGate`): asking the same
+    // boundary twice around one command compares the record against a world the command itself has moved.
+    const admittedGate = boundary ? await requireUserChoiceGate({ root, taskId: change, boundary }) : undefined;
     // hotfix/tweak and Git-Flow preparation can create or inspect an intake task
     // before an implementer handoff exists. They do not mutate an established
     // implementation phase, so receipt enforcement begins once a task has
@@ -220,7 +249,11 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     if (explicitChange && result.taskId !== change) {
         return { command, taskId: change, phase: 'intake', success: false, error: `Task ID mismatch: requested ${change} but result returned ${result.taskId}.` };
     }
-    if (boundary && result.success) await consumeUserChoiceGate({ root, taskId: change, boundary });
+    // **The gate that admitted this command is the one it consumes.** The command in between can move what a second ask
+    // would compare against — a `build --seal` gives a task the content identity its implementation gate was created
+    // without, so re-asking here read the gate that had just been admitted as obsolete and failed a command that had
+    // already succeeded (measured: owned paths declared at seal time).
+    if (admittedGate && result.success) await consumeUserChoiceGate({ root, taskId: change, boundary: admittedGate.boundary, admitted: admittedGate });
     // **One table, read in this direction too.** The chain that used to live here was the only statement of which command
     // creates which gate, so the refusal that tells an operator how to rebuild one had nothing to read from.
     const nextBoundary = result.success
@@ -420,10 +453,13 @@ export function boundaryForCommand(
 
 export async function runGateCommand(argv: string[], root: string): Promise<Record<string, unknown>> {
     if (argv[0] === 'reset') {
-        // **The road out of a damaged record.** Measured (I-36): a record whose `choice` its own schema rejects failed
-        // every read, `gate approve` refused it, the phase command refused for want of a choice, and no command removed or
-        // rewrote it — so the task was stuck until the record was restored by hand. This verb removes **only** a record the
-        // mechanism cannot read; a readable one is a decision somebody made and is refused.
+        // **The road out of a record that cannot be read, and out of one that no longer decides anything.** Measured (I-36): a
+        // record whose `choice` its own schema rejects failed every read, `gate approve` refused it, the phase command refused
+        // for want of a choice, and no command removed or rewrote it — so the task was stuck until the record was restored by
+        // hand. This verb removes a record the mechanism cannot read, **and** one that no longer speaks for the current
+        // content (round 4's F1: a stale record left in place left the boundary with no road, because the command that prints
+        // the stale refusal is refused in the phase that prints it). A readable record that still binds is a live decision
+        // and is refused.
         const resetTask = argValue(argv, '--task');
         const resetBoundary = argValue(argv, '--boundary') as UserChoiceBoundary | undefined;
         const record = argValue(argv, '--record');
@@ -469,6 +505,10 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
     // refuses and every later read of the record failed.
     const choice = argValue(argv, '--choice');
     if (!task || !boundary || !choice) throw new Error('kata gate approve requires --task, --boundary, and --choice');
+    // **A human decision cannot clear an evidence debt.** Approving the boundary in front of an unreturned dependency
+    // would let the recorded choice stand in for the independent certification the dependency is about, which is exactly
+    // the substitution this gate exists to prevent. The refusal carries the same road `status` publishes.
+    await assertDependencyAllowsApproval(root, task, boundary);
     // --for-task records the same answer for the whole task: the boundaries still exist and are still recorded, they
     // just stop asking the same human the same question (and they report when they reuse the answer).
     const forTask = switchPresent(argv, '--for-task');

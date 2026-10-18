@@ -273,8 +273,19 @@ export async function collectSealPreflight(input: {
         deny('ownershipConflicts', 'Cannot seal while declared task ownership overlaps another task. Use --allow-ownership-conflicts to confirm and proceed.', { ownershipConflicts });
     }
 
-    // 10-12. Strict closure: waivers, then path coverage, then the CodeGraph candidates the matrix did not declare.
-    if (matrixRequired) {
+    // 10. **The operator's recorded decisions, read on every profile.**
+    //
+    // Measured as an independent finding (`gate-r10-F3`, class `refusal-cannot-be-executed`): a closure contract that names
+    // no check can only be released by a recorded decision naming `obligation:<class>` — the refusal says so in as many
+    // words — and this read used to sit inside the `matrixRequired` branch below. On the std profile the operator recorded
+    // exactly what the refusal asked for and the same refusal came back, unchanged, forever: the road was printed and could
+    // not be walked.
+    //
+    // The decision is not a matrix concept. It is how an obligation the *mechanism cannot verify* is closed, and the reader
+    // that consumes it (`checkObligations`) runs on every profile, so reading it only under strict made the same contract
+    // answerable on one profile and unanswerable on another. What stays strict-only is what genuinely needs a matrix: path
+    // coverage and the CodeGraph candidates derived from the rows.
+    {
         const persistedWaivers = await readWaivers(root, taskId);
         waivers = [...new Map([...persistedWaivers, ...(options.waivers ?? [])].map((waiver) => [waiver.path, waiver])).values()];
         const waiverErrors = validateWaivers(waivers);
@@ -282,7 +293,10 @@ export async function collectSealPreflight(input: {
             deny('waiverErrors', 'Invalid recorded waiver.', { waiverErrors });
             return { blockers, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
         }
+    }
 
+    // 11-12. Strict closure: path coverage, then the CodeGraph candidates the matrix did not declare.
+    if (matrixRequired) {
         if (task.workflowProfile?.strictClosure && task.acceptanceMatrix) {
             codeGraphCandidates = await discoverCodeGraphCandidates(root, task.acceptanceMatrix, ownedPaths);
             codeGraphDisposition = classifyCodeGraphCandidates(task.acceptanceMatrix, ownedPaths, waivers, codeGraphCandidates);

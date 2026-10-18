@@ -142,6 +142,33 @@ export function revisionBindingFields(identity: RevisionIdentity): VerdictBindin
 }
 
 /**
+ * **Whether a record names any binding at all** — a revision, a content identity, a surface identity, or a freeze.
+ *
+ * This is the one fact that separates "this record is about some content" from "this record is about nothing", and it is
+ * asked rather than inferred from the fields at the place the answer is used (round 9's F1: the gate's own predicate read
+ * `!record.revisionId && !record.manifestHash`, `bindsToRevision` read its own fall-through, and `assertRevision` carried a
+ * third exemption, so one fact had three answers from three symbols and no instrument decided any of them).
+ */
+export function namesAnyBinding(record: VerdictBinding | null | undefined): boolean {
+    return Boolean(record
+        && (record.revisionId || record.manifestHash || record.codeManifestHash
+            || record.governanceManifestHash || record.instrumentManifestHash
+            || record.candidateFreezeSha256));
+}
+
+/**
+ * **What a record that names no binding at all answers, for whatever the current identity is.**
+ *
+ * A record that names no content is not a statement about any content: it speaks only while **nothing** is sealed — the
+ * state a gate is created and approved in before the first seal — and it stops speaking the moment a revision exists,
+ * because from then on "the current content" is a fact the record never named. Before round 9 this was the fall-through of
+ * `bindsToRevision` while the gate's own predicate answered the opposite for the same record.
+ */
+export function unboundBindingSpeaksForCurrentContent(current: RevisionIdentity): boolean {
+    return !current.revisionId;
+}
+
+/**
  * Whether a verdict still speaks for the current revision.
  *
  * With a revision present, the id or the content has to agree — never neither. With **nothing** sealed, a verdict that
@@ -154,8 +181,20 @@ export function bindsToRevision(
     options: { scope?: VerdictScope } = {},
 ): boolean {
     if (!artifact) return false;
+    // **A record that names no binding at all is answered here, not by a fall-through**, so the fact has one home that
+    // `recordSpeaksForCurrentContent` asks as well — see `unboundBindingSpeaksForCurrentContent`.
+    if (!namesAnyBinding(artifact)) return unboundBindingSpeaksForCurrentContent(current);
     const scope = options.scope ?? 'full';
-    if (!current.revisionId) return !artifact.revisionId;
+    if (!current.revisionId) {
+        // **Nothing is sealed, so the only binding that can still be compared is the content one.** A record that names a
+        // content identity, against an identity whose content half is known, is compared with it rather than passed over:
+        // that is the state the user-choice gate answers in before the first seal, where its identity is widened to the
+        // declared content (`contentIdentityFor`). A caller handing in a sealed identity has no content half here — both
+        // fields come from the same revision — so the rule that stood before still decides for it: a record naming a
+        // revision binds while nothing is sealed, and one that names none stands on its own.
+        if (artifact.manifestHash && current.manifestHash) return artifact.manifestHash === current.manifestHash;
+        return !artifact.revisionId;
+    }
     // §7.4: when both sides can name the frozen candidate, that is the binding — and it takes precedence over the owned
     // manifest, which cannot see a change committed outside the declaration.
     const freezeKnown = Boolean(artifact.candidateFreezeSha256) && Boolean(current.candidateFreezeSha256);
@@ -183,4 +222,23 @@ export function bindsToRevision(
             && artifact.governanceManifestHash === current.governanceManifestHash;
     }
     return false;
+}
+
+/**
+ * **One answer to "does this existing binding still speak for the current content?"**
+ *
+ * `bindsToRevision` is that answer for a verdict that is being *stamped*; this is its name for the readers that ask the
+ * question about a record already on disk — the user-choice gate's reuse rule, its removal rule and `assertRevision` — and
+ * it settles the two facts those readers used to decide for themselves: a record that names no binding at all is answered
+ * by `unboundBindingSpeaksForCurrentContent`, and the caller hands in the identity it has **already read**, so no reader
+ * derives the current revision a second time inside one decision (the contract `currentRevisionIdentityFrom` states for
+ * that non-atomic pointer). Two symbols answering this question is the defect, not the repair.
+ */
+export function recordSpeaksForCurrentContent(
+    record: VerdictBinding | null | undefined,
+    current: RevisionIdentity,
+    options: { scope?: VerdictScope } = {},
+): boolean {
+    if (!namesAnyBinding(record)) return unboundBindingSpeaksForCurrentContent(current);
+    return bindsToRevision(record, current, options);
 }

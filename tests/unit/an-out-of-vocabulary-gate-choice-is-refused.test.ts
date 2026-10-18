@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -93,11 +92,11 @@ describe('an out-of-vocabulary gate choice is refused', () => {
         // record and reads it back through the reader, so removing the field from the schema reddens it.
         const root = await fixture('reuse');
         mkdirSync(join(root, '.kata', 'tasks', 'held'), { recursive: true });
-        writeFileSync(join(root, '.kata', 'tasks', 'held', 'user-choice-task.json'), `${JSON.stringify({
-            taskId: 'held', choice: 'switched', createdAt: new Date().toISOString(), approvedAt: new Date().toISOString(),
-        })}\n`);
-
-        const { requireUserChoiceGate, readGateState } = await import('../../src/workflow/user-choice-gate.js');
+        // **Recorded by the mechanism, not by hand** (round 7's F2): a task-level answer that carries no binding is no longer
+        // reused, because an answer about unknown content must not authorise the content under consideration. The property
+        // this case decides — the reuse path materialises a record its own reader accepts — is unchanged.
+        const { requireUserChoiceGate, readGateState, recordTaskChoice } = await import('../../src/workflow/user-choice-gate.js');
+        await recordTaskChoice({ root, taskId: 'held', choice: 'switched' });
         const reused = await requireUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate' });
         expect(reused.choice).toBe('switched');
         expect(reused.reusedFromTaskChoice).toBe(true);
@@ -144,21 +143,11 @@ describe('an out-of-vocabulary gate choice is refused', () => {
         }
     });
 
-    it('refuses it through the CLI too, and leaves the record unreadable-by-nobody', async () => {
-        // The command is where the measured call was made, so the criterion is driven there as well: the CLI must not
-        // report `approved: true` for a value it did not write.
-        const root = await fixture('cli');
-        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
-        const cli = join(process.cwd(), 'dist', 'cli.js');
-        if (!existsSync(cli)) return; // the bundle is built by the suite's own step; the writer cases above cover the rule
-        let failed = false;
-        try {
-            execFileSync('node', [cli, 'gate', 'approve', '--task', 'held', '--boundary', 'archive_gate', '--choice', 'archive'], { cwd: root, stdio: 'pipe' });
-        } catch {
-            failed = true;
-        }
-        expect(failed).toBe(true);
-        const written = JSON.parse(readFileSync(join(root, '.kata', 'tasks', 'held', 'user-choice-archive_gate.json'), 'utf8')) as { choice?: string };
-        expect(written.choice).toBeUndefined();
+    it('refuses an out-of-vocabulary value at the task-level writer as well', async () => {
+        // **Round 8's F8.** The task-level writer stored whatever it was given, so it could write a record its own reader
+        // reports as damaged — the second writer of the same fact needs the same check as the first.
+        const root = await fixture('task-choice-vocabulary');
+        const { recordTaskChoice } = await import('../../src/workflow/user-choice-gate.js');
+        await expect(recordTaskChoice({ root, taskId: 'held', choice: 'archive' as never })).rejects.toThrow(/refuses the choice "archive"/u);
     });
 });

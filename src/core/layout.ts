@@ -14,6 +14,9 @@ import judgeResultSchema from 'kata-asset:schemas/judge-result.schema.json';
 import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
 import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
 import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
+import taskDependencySchema from 'kata-asset:schemas/task-dependency.schema.json';
+import taskCompletionSchema from 'kata-asset:schemas/task-completion.schema.json';
+import correctiveActionSchema from 'kata-asset:schemas/corrective-action.schema.json';
 import { hashContent } from './hash.js';
 import { isNonSourceDirectory } from './repository-identity.js';
 
@@ -26,7 +29,10 @@ const schemaContents: Record<string, string> = {
   'judge-result.schema.json': judgeResultSchema,
   'wiki-record.schema.json': wikiRecordSchema,
   'handoff-packet.schema.json': handoffPacketSchema,
-  'handoff-receipt.schema.json': handoffReceiptSchema,};
+  'handoff-receipt.schema.json': handoffReceiptSchema,
+  'task-dependency.schema.json': taskDependencySchema,
+  'task-completion.schema.json': taskCompletionSchema,
+  'corrective-action.schema.json': correctiveActionSchema,};
 
 export type LayoutResult = {
   created: string[];
@@ -599,6 +605,39 @@ export function judgePath(root: string, taskId: string): string {
 
 export function verifyPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'verify.json');
+}
+
+/**
+ * The return evidence of this task's task-to-task blocking edges.
+ *
+ * Deliberately not on the edge itself: the edge carries the topology (one writer, one graph) and this file carries the
+ * return — that the corrective work was independently certified, that its accepted content is present in this tree, and
+ * which revision of *this* task the return was recorded against. Folding the return into the edge would make any later
+ * rewrite of the graph silently re-certify the dependency.
+ */
+export function dependenciesPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'dependencies.json');
+}
+
+/**
+ * How this task ended: the integration evidence, and the explicit decisions that close it without delivery.
+ *
+ * Beside the other task records rather than inside `task.json`, because it is written by a *later* decision than the
+ * contract: `task.json` is the frozen acceptance contract, and a delivery record written into it would move the contract
+ * every time somebody integrated a branch.
+ */
+/**
+ * What a mechanism-correcting task declares it discharges: the class contract, its source change and its owner.
+ *
+ * Its own record rather than a field on the task, for the same reason the completion record is: `task.json` is the frozen
+ * acceptance contract, and a declaration written into it would move the contract every time a class was named.
+ */
+export function correctiveActionPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'corrective-action.json');
+}
+
+export function completionPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'completion.json');
 }
 
 export function repairPath(root: string, taskId: string): string {

@@ -1,5 +1,7 @@
 # 当前独立审查流程为何无法收敛
 
+> **历史快照，非当前项目级决策依据。** 这里的八轮数据和 2026-10-16 实施记录保留为原始证据；后续机制修正及整个项目的最新综合评估见 [`kata-review-loop-project-assessment.md`](kata-review-loop-project-assessment.md)。尤其不要把本文实施前的“无 lineage / 无终局路由”当成现行代码状态。
+
 **日期：** 2026-10-16  
 **对象：** `the-gates-can-be-repaired` 及其 8 轮审查链  
 **性质：** 流程级根因分析；不构成第 9 轮审查，也不修改当前实现

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { USAGE } from '../../src/cli/usage.js';
 import { CLOSING_DISPOSITIONS, DISPOSITIONS, isOpenFinding } from '../../src/quality/review-ladder.js';
 
 /**
@@ -47,8 +48,20 @@ describe('a disposition has one vocabulary', () => {
         // only phrases made of letters and dashes, so `` `findings defer|accept|rout` `` slipped through it and the case was
         // green while the sentence it exists to remove was still there — an instrument that cannot redden.
         const named = [...description.matchAll(/`([^`]+)`/gu)].map((match) => match[1]!);
-        const commands = named.filter((value) => /^findings\b/u.test(value));
-        expect(commands, `the schema still names a findings command: ${description}`).toEqual([]);
+        // **Command-shaped, not a denylist of one retired family.** The filter was `/^findings\b/`, so it caught the sentence
+        // this change removed and nothing else: round 3's F8 replaced it with `nope defer` and the case stayed green while the
+        // claim — "the schema names no command the CLI does not have" — was still false. A span with more than one token is a
+        // command-shaped phrase, and its verb is checked against the CLI's own vocabulary; a single token is a name.
+        // **Stated boundary, not a silent one** (round 4's F5(b), round 5's F4): a span of one token is treated as a *name*
+        // (`fixed`, `disposition`) rather than a command-shaped phrase, so an invented single verb inside backticks would pass
+        // this case. Deciding it would flag the schema's own vocabulary; the gap is stated here and in the design document.
+        const verbOf = (value: string): string => {
+            const tokens = value.trim().split(/\s+/u);
+            return tokens[0] === 'kata-cli' ? (tokens[1] ?? '') : (tokens[0] ?? '');
+        };
+        const unknown = named.filter((value) => value.trim().split(/\s+/u).length > 1)
+            .filter((value) => !Object.hasOwn(USAGE, verbOf(value)));
+        expect(unknown, `the schema names a command the CLI does not have: ${unknown.join(' | ')}`).toEqual([]);
         expect(description).toMatch(/disposition/iu);
     });
 });

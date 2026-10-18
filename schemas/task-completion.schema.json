@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/task-completion.schema.json",
+  "title": "Task completion record",
+  "description": "How this task ended. `integration` is the evidence that the certified candidate reached a target the user chose and was checked there; `stop` and `waiver` are explicit human decisions that close the governance transaction without claiming delivery. An absent record is not a claim about any of them.",
+  "type": "object",
+  "required": ["taskId", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "integration": {
+      "type": "object",
+      "required": ["target", "commit", "certifiedRevisionId", "check", "recordedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "minLength": 1 },
+        "certifiedRevisionId": { "type": "string", "minLength": 1 },
+        "check": {
+          "type": "object",
+          "required": ["command", "args", "exitCode", "at"],
+          "additionalProperties": false,
+          "properties": {
+            "command": { "type": "string", "minLength": 1 },
+            "args": { "type": "array", "items": { "type": "string" } },
+            "exitCode": { "type": "integer" },
+            "at": { "type": "string", "minLength": 1 },
+            "output": { "type": "string" }
+          }
+        },
+        "recordedAt": { "type": "string", "minLength": 1 },
+        "recordedBy": { "type": "string", "minLength": 1 },
+        "note": { "type": "string", "minLength": 1 }
+      }
+    },
+    "stop": {
+      "type": "object",
+      "required": ["reason", "recordedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "recordedAt": { "type": "string", "minLength": 1 },
+        "recordedBy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "waiver": {
+      "type": "object",
+      "required": ["reason", "impact", "recordedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "impact": { "type": "string", "minLength": 1 },
+        "recordedAt": { "type": "string", "minLength": 1 },
+        "recordedBy": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

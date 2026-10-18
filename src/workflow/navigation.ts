@@ -24,6 +24,9 @@ import { isPassing } from '../quality/evidence.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
+import { dependencyEntryReport, readTaskDependency } from './task-dependency.js';
+import { ownedClassRecurrences, readCorrectiveAction } from './corrective-action.js';
+import { readCompletion } from './completion.js';
 import { readReviewDecisionSnapshot } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
@@ -130,6 +133,47 @@ export type UpstreamSummary = {
    * current-revision count cannot do. `null` when the round history could not be read (that state routes on its own).
    */
   reviewLoopRecurrence?: ReviewRecurrence[] | null;
+  /**
+   * **The one decision about this task's blocking edges, published where the router reads it.**
+   *
+   * Present only when an edge claims something: a task with no blocking edge publishes nothing, so no existing task's
+   * status changes. `blockers` carries the machine-readable reason and the road the refusal prints, because a routing
+   * prompt that names a different remedy than the gate is how an operator is sent to a command that refuses.
+   */
+  taskDependency?: {
+    state: string;
+    entries: Record<string, 'permitted' | { refused: string; road: string | null }>;
+    blockers: Array<{ correctiveTaskId: string; reason: string; detail: string; road: string | null }>;
+  };
+  /**
+   * **How this task ended, published under one name.**
+   *
+   * `approved` and `delivered` were the same word on every surface an operator reads, so a task whose certified content sat
+   * on an unmerged branch printed as finished. The state is derived once (`workflow/completion.ts`) and published here;
+   * nothing routes on it, because the honest answer for an integrated-but-unarchived task is a command the operator runs,
+   * not a different reviewer.
+   */
+  completion?: {
+    state: string;
+    reason: string;
+    detail: string;
+    road: string | null;
+  };
+  /**
+   * **A class that a corrective action owns, found again in this change's own rounds.**
+   *
+   * The cross-change form of `ifRecursAgain`: the corrective action declared the class closed, this change's rounds found
+   * it again, and the next move belongs to the class's owner. Published so the router and the operator read the same fact,
+   * and derived from the dependency edges this change already has (no repository scan).
+   */
+  correctiveActionRecurrence?: Array<{
+    classKey: string;
+    ownerTaskId: string;
+    owner: string;
+    recordedAs: string;
+    rounds: string[];
+    findings: string[];
+  }>;
   /** The same recurrence counted by defect class, with the repair-origin count — a report, not a gate. */
   reviewLoopClassRecurrence?: ClassRecurrence[] | null;
   /**
@@ -278,6 +322,13 @@ export const nextActionReasons = [
   // mechanization is supposed to end. Reported and routed, never a gate change.
   'review_class_recurring',
   'review_loop_unmeasurable',
+  // **A blocking dependency whose corrective action has not returned.** The task's certification entries are refused by a
+  // fact that lives outside it, so the route is the dispatcher's read-only status and the road the refusal prints — not a
+  // repair of this task, which cannot clear it.
+  'blocked_by_unreturned_dependency',
+  // A class a corrective action owns, found again in a dependent change: the class owner decides, so nothing continues
+  // automatically.
+  'escalate_corrective_action_did_not_hold',
   'unreadable_review_record',
   'repair_unreadable_current_revision',
   'repair_unreadable_round_history',
@@ -556,9 +607,37 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // succeeded decided whether any of the facts above were published at all — and a refusal derived independently of it went
   // unpublished whenever it had nothing to refuse on. Measured: a corrupt pointer with no `review.json` published
   // `currentRevisionUnreadable` and `reviewFindings: 0`.
+  // **The dependency is read here, once, and the gate reads the same function.** `readTaskDependency` is the one derivation
+  // of "is this task blocked by corrective work that has not returned"; asking it here rather than reconstructing the
+  // question from the graph keeps the routing prompt and the refusal from disagreeing about the same task — which is the
+  // shape this repository has paid for repeatedly (a status that says continue beside a seal that refuses).
+  const dependencyDecision = await readTaskDependency(root, taskId);
+  // **Only the classes this change is actually connected to, and only the declarations of the tasks it names.** A
+  // repository-wide scan on the status path would cost every read of every task, and the fact being asked for is about the
+  // edges this change already has. A declaration that cannot be read is skipped rather than guessed at — the class simply
+  // is not attributed, which is the safe direction (a missed signal, never a wrong owner).
+  const ownedClasses: Array<{ taskId: string; classKey: string; owner: string }> = [];
+  for (const edge of dependencyDecision.edges) {
+    const declarationRead = await readCorrectiveAction(root, edge.correctiveTaskId);
+    if (declarationRead.kind !== 'usable') continue;
+    ownedClasses.push({ taskId: edge.correctiveTaskId, classKey: declarationRead.declaration.classKey, owner: declarationRead.declaration.owner });
+  }
+  const ownedRecurrences = ownedClasses.length === 0
+    ? []
+    : ownedClassRecurrences({ owned: ownedClasses, classes: classRecurrenceEntries ?? [] });
+  // Read once and published: the same decision `kata-cli completion status` prints, so an operator cannot be told "in
+  // flight" by one surface and "delivered" by another about the same task.
+  const completionDecision = await readCompletion(root, taskId);
+  const dependencyProblems: MergeBlockingProblem[] = dependencyDecision.blockers.map((entry) => ({
+    source: 'claim',
+    id: `task_dependency_${entry.reason}`,
+    severity: 'blocking',
+    message: `Blocked by '${entry.correctiveTaskId}': ${entry.detail}${entry.road ? ` Next: ${entry.road}` : ''}`,
+  }));
   const openProblems: ReadonlyArray<MergeBlockingProblem> = [
     ...(blockingRead.ok ? blockingRead.openProblems : []),
     ...unreadableProblems,
+    ...dependencyProblems,
   ];
   const problemCounts = countFindingsBySeverity(openProblems);
 
@@ -596,6 +675,27 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     failedAcceptance: failedAcceptance.length,
     failedVerifyAcceptance: failedVerifyAcceptance.length,
     reviewLoop,
+    ...(ownedRecurrences.length > 0 ? { correctiveActionRecurrence: ownedRecurrences } : {}),
+    completion: {
+      state: completionDecision.state,
+      reason: completionDecision.reason,
+      detail: completionDecision.detail,
+      road: completionDecision.road,
+    },
+    ...(dependencyDecision.state === 'absent' ? {} : {
+      taskDependency: {
+        state: dependencyDecision.state,
+        // The per-entry answer travels with the state: `ready_to_revalidate` permits the seal and refuses the judge, so a
+        // summary publishing only the state would read as "nothing blocks" beside a gate that refuses.
+        entries: dependencyEntryReport(dependencyDecision),
+        blockers: dependencyDecision.blockers.map((entry) => ({
+          correctiveTaskId: entry.correctiveTaskId,
+          reason: entry.reason,
+          detail: entry.detail,
+          road: entry.road,
+        })),
+      },
+    }),
     // **The reading that spans revisions, published beside the one that does not.** `reviewLoop` is scoped to the current
     // revision on purpose, so a repair — which necessarily issues a new revision — makes the previous rounds history about
     // something else, and the same problem returning for the fifth time reads as a loop that has measured nothing yet.
@@ -872,6 +972,37 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       role: invalidating.role,
       reason: invalidating.reasonFor?.(upstream) ?? invalidating.reason,
       priority: invalidating.priorityFor?.(upstream) ?? invalidating.priority,
+    };
+  }
+  const dependencyState = upstream.taskDependency?.state;
+  // **A dependency that has not returned stops the certification, so the route names `blocked_by_unreturned_dependency`
+  // instead of sending a repair.** It sits below the invalidating table on purpose — a record nobody can read makes every
+  // other reading meaningless — and above the ledger branch, because the seal that would produce that evidence is the very
+  // entry this dependency refuses. It is guarded by phase because a blocked task can still work: `pending` permits repair
+  // and refuses seal, verify, review, judge and archive. The state comes from the summary this function is handed, never
+  // from a second read of the graph: the decision is derived once, and a router that re-asked it would be the second
+  // derivation this whole change exists to remove.
+  if ((dependencyState === 'pending' || dependencyState === 'undetermined')
+    && (phase === 'hardVerify' || phase === 'review' || phase === 'judge' || phase === 'distill')) {
+    return {
+      nextSkill: '/kata',
+      role: 'dispatcher',
+      reason: 'blocked_by_unreturned_dependency',
+      priority: 2180 + (upstream.taskDependency?.blockers.length ?? 0),
+    };
+  }
+  // **A class its own corrective action already owns does not get repaired here again, so this branch names
+  // `escalate_corrective_action_did_not_hold`.** The corrective action declared the class closed, this change depends on it,
+  // and this change's own rounds found the class again: the next move belongs to the class's owner, because repairing it
+  // here is how one class gets paid for twice — the measured shape this design exists to stop (five rounds, three classes,
+  // three sites). It sits below the dependency route on purpose: a task that is still blocked hears "blocked" first,
+  // because that is the fact that stops it.
+  if (phase === 'review' && (upstream.correctiveActionRecurrence?.length ?? 0) > 0) {
+    return {
+      nextSkill: '/kata',
+      role: 'dispatcher',
+      reason: 'escalate_corrective_action_did_not_hold',
+      priority: 2160 + (upstream.correctiveActionRecurrence?.length ?? 0),
     };
   }
   // **A recurrence is a report about history, and it may only route a repair the current ladder admits.** Measured on
@@ -1174,6 +1305,11 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   escalate_review_without_progress: null,
   escalate_declared_repair_did_not_hold: null,
   review_loop_unmeasurable: null,
+  // A decision about the change rather than about which platform runs next: the dependency has to return or the owner has
+  // to decide it, and the gates it passes through are unchanged.
+  blocked_by_unreturned_dependency: null,
+  // Also a decision about the change rather than about which platform runs next.
+  escalate_corrective_action_did_not_hold: null,
   // Not a model boundary either: it is a decision about the change, and the gates it passes through are unchanged.
   review_loop_recurring: null,
   // A class recurring inside a repair routes through the build entry, not through a gate: nothing about what the gates

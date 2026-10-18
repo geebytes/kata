@@ -347,7 +347,13 @@ export function declarationsOfRecord(value: unknown): { ok: true; declarations: 
 }
 
 /** The obligation a record carries, or the reason it cannot be one. Absent is `null`; malformed is an `Error`. */
-function closureObligationOf(value: unknown): ClosureObligation | null | Error {
+/**
+ * The seven-field obligation reader, exported so a *corrective action's* declaration is validated by the same rule.
+ *
+ * A corrective action discharges a class contract, and a second validator would be a second definition of the class — the
+ * defect this repository names `one-fact-derived-twice`, in the very place the class vocabulary lives.
+ */
+export function closureObligationOf(value: unknown): ClosureObligation | null | Error {
     if (value === undefined) return null;
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return new Error('recurrenceAnalysis.closureObligation is not an object');

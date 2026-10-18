@@ -112,6 +112,10 @@ export const VALUE_FLAGS: readonly string[] = [
     '--review', '--review-evidence', '--review-mode', '--reviewed-path', '--risk-class', '--role', '--root',
     '--routing-mode', '--run-id', '--scope', '--seed', '--set-file', '--severity', '--since', '--statement', '--task',
     '--task-kind', '--tier', '--title', '--to', '--type', '--version', '--waivers-file', '--wiki', '--wiki-from',
+    // The dependency, completion and corrective-action families read a value for each of these, and a vocabulary that named
+    // only the flags the scan happens to recognise would let `parseChangeArg` read one of them as a task id.
+    '--relation', '--target', '--commit', '--check', '--check-arg', '--impact', '--note',
+    '--source-change', '--class', '--owner', '--obligation-file', '--finding',
 ];
 
 export function parseRootArg(argv: string[]): string | undefined {

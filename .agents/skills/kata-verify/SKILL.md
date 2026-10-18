@@ -123,6 +123,16 @@ Do this:
    ```bash
    kata-cli ledger run --change <task-id> --out request.json
    ```
+   **Then read what the round owes, before spending it.** The preflight derives, from the persisted request itself, both
+   the blockers that make a dispatch pointless and the exact list the result must carry back — including the batch findings
+   a `focused_followup` owes a verdict for, which is the case measured to waste a whole round (a correct reviewer refused
+   because the brief it was handed never named the list it had to answer):
+   ```bash
+   kata-cli review --change <task-id> --preflight
+   ```
+   Hand the `handoff` fields to the subagent (`requestId`, `reviewKind`, and every id in `batchClosureIds`), because the
+   recorder reads them from that same request. The entry itself refuses a persisted request that answers another revision
+   or names paths that do not exist, **before the review gate is consumed**, so the refusal costs no boundary.
 3. **Dispatch exactly one subagent with the ReviewRequest as its only payload.** The subagent receives the request file, reads no author-written brief, stays read-only on the code under review, and returns a structured result to this Skill. The Skill writes that result through the only result path:
    ```bash
    kata-cli review --change <task-id> --result-file result.json

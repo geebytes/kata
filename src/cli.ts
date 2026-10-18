@@ -137,6 +137,10 @@ import {
 // The role table is part of the task family now; re-exported so callers that know the entry point keep working.
 export { roleForPhase } from './workflow/navigation.js';
 import { parseTaskRelationType, runGitFlowCommand, runRelationsCommand } from './cli/relations.js';
+import { runDependencyCommand } from './cli/dependency.js';
+import { runCompletionCommand } from './cli/completion.js';
+import { runCorrectiveCommand } from './cli/corrective.js';
+import { runMetricsCommand } from './cli/metrics.js';
 
 // The output context is the CLI's public boundary; re-exported so callers (and tests) that know the entry point keep
 // working while command handlers move to their own modules.
@@ -337,6 +341,26 @@ async function runMain(argv: string[]): Promise<void> {
 
 
 
+
+    if (command === 'metrics') {
+        outputResult(await runMetricsCommand(argv.slice(1)));
+        return;
+    }
+
+    if (command === 'corrective') {
+        outputResult(await runCorrectiveCommand(argv.slice(1)));
+        return;
+    }
+
+    if (command === 'completion') {
+        outputResult(await runCompletionCommand(argv.slice(1)));
+        return;
+    }
+
+    if (command === 'dependency') {
+        outputResult(await runDependencyCommand(argv.slice(1)));
+        return;
+    }
 
     if (command === 'relations') {
         const result = await runRelationsCommand(argv.slice(1));

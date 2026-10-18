@@ -23,6 +23,9 @@ import reviewEvidenceSchema from 'kata-asset:schemas/review-evidence.schema.json
 import reviewEvidenceVerdictSchema from 'kata-asset:schemas/review-evidence-verdict.schema.json';
 import reviewDecisionSchema from 'kata-asset:schemas/review-decision.schema.json';
 import reviewPolicySchema from 'kata-asset:schemas/review-policy.schema.json';
+import taskDependencySchema from 'kata-asset:schemas/task-dependency.schema.json';
+import taskCompletionSchema from 'kata-asset:schemas/task-completion.schema.json';
+import correctiveActionSchema from 'kata-asset:schemas/corrective-action.schema.json';
 import { readFile } from 'node:fs/promises';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import type { ErrorObject, ValidateFunction } from 'ajv';
@@ -53,6 +56,9 @@ const schemaText: Record<string, string> = {
   'review-evidence-verdict': reviewEvidenceVerdictSchema,
   'review-decision': reviewDecisionSchema,
   'review-policy': reviewPolicySchema,
+  'task-dependency': taskDependencySchema,
+  'task-completion': taskCompletionSchema,
+  'corrective-action': correctiveActionSchema,
 };
 
 /**

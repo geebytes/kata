@@ -150,7 +150,9 @@ describe('a seal has to satisfy the closure contract a root-cause round wrote', 
 
         expect(result.success).toBe(false);
         const unmet = (result.diagnostics?.closureObligations as Array<{ unmet: string[] }>)[0].unmet.join(' | ');
-        expect(unmet).toContain('inventory names sites that do not exist');
+        // The sentence changed with the reader: an entry is resolved to the file it names, so the refusal quotes the entry
+        // that names no file instead of reporting the whole list as missing.
+        expect(unmet).toContain('inventory entries name no file in this repository');
         expect(unmet).toContain('effectivenessTest');
     });
 
