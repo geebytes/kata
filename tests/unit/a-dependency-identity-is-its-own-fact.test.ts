@@ -6,10 +6,13 @@ import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { addKataRelation } from '../../src/core/relations.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
-import { dependencyIdentityFor } from '../../src/workflow/task-dependency.js';
+import { dependencyIdentityFor, dependencyRefusal, readTaskDependency } from '../../src/workflow/task-dependency.js';
 import { speaksForDependency } from '../../src/workflow/verdict-binding.js';
 import { judge } from '../../src/quality/judge.js';
 import { evaluateJudgePass, evaluateReviewClearance } from '../../src/workflow/distill-gates.js';
+import { readKataRelations } from '../../src/core/relations.js';
+import { recordDependencyReturn } from '../../src/workflow/task-dependency.js';
+import { runDependencyCommand } from '../../src/cli/dependency.js';
 
 /**
  * **The dependency identity is a different fact from the content identity, and both have to be stamped.**
@@ -163,5 +166,93 @@ describe('the gate that clears a change asks the dependency half too', () => {
         write(root, '.kata/tasks/dependent/judge.json', record(identity as string));
         expect((await evaluateJudgePass({ root, taskId: 'dependent', currentDiffHash: 'a'.repeat(64), freshEvidence: null })).reason)
             .toBe('no_evidence');
+    });
+});
+
+describe('an edge written before ids existed is not treated as unresolved work', () => {
+    /** A graph exactly as the pre-id writer produced it: version 1, `kind: control`, no `id` on the edge. */
+    async function legacyFixture(name: string): Promise<string> {
+        const root = await fixture(name);
+        write(root, '.kata/relations.json', `${JSON.stringify({
+            version: 1,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            relations: [{
+                kind: 'control',
+                type: 'blocked_by',
+                from: { type: 'task', id: 'dependent' },
+                to: { type: 'task', id: 'corrective' },
+                reason: 'written before ids existed',
+                createdAt: '2026-01-01T00:00:00.000Z',
+            }],
+        }, null, 2)}\n`);
+        return root;
+    }
+
+    it('reports the edge itself as undetermined, with a road that is the migration', async () => {
+        const root = await legacyFixture('legacy');
+
+        const decision = await readTaskDependency(root, 'dependent');
+        // **`undetermined`, not `pending`.** `pending` says "the corrective work has not returned", which is a statement
+        // about the other task; the truth here is that no return can ever be recorded against this edge.
+        expect(decision.state).toBe('undetermined');
+        expect(decision.blockers[0]?.reason).toBe('legacy_undetermined');
+        expect(decision.blockers[0]?.detail).toContain('cannot be established');
+        // The refusal does not blame the corrective task, because that task may be perfectly certified.
+        expect(decision.blockers[0]?.detail).toContain("It is not treated as unresolved work by 'corrective'");
+        // And the road is a command that exists — the migration, not "re-create the edge somehow".
+        expect(decision.blockers[0]?.road).toBe('kata-cli relations add --from task:dependent --to task:corrective --type blocked_by --reason "<why this task depends on it>"');
+
+        // Every entry is refused, and `status` publishes the same reason.
+        for (const entry of ['seal', 'verify', 'review', 'judge', 'archive'] as const) {
+            expect(dependencyRefusal(decision, entry)).not.toBeNull();
+        }
+        expect((await runDependencyCommand(['status', '--change', 'dependent', '--root', root])).state).toBe('undetermined');
+    });
+
+    it('does not blame the corrective task even when it is fully certified, and is fixed by running the printed road', async () => {
+        const root = await legacyFixture('legacy-migrated');
+        // A certified corrective action: under the old behaviour this edge still reported `pending`/`corrective_not_certified`
+        // and sent the operator to inspect a task that had done nothing wrong.
+        const { revision } = await createTaskRevisionIfChanged({ root, taskId: 'corrective', ownedPaths: ['src/a.ts'], checkIds: [] });
+        write(root, '.kata/tasks/corrective/judge.json', `${JSON.stringify({ taskId: 'corrective', result: 'PASS', revisionId: revision.id, acceptance: [{ id: 'AC-1', result: 'PASS' }] })}\n`);
+        write(root, '.kata/tasks/corrective/review.json', `${JSON.stringify({
+            revisionId: revision.id, manifestHash: revision.manifestHash, reviewedRevisionId: revision.id,
+            recordedAt: '2026-01-01T00:00:00.000Z', reviewEvidence: 'the independent round', findings: [], status: 'approved',
+        })}\n`);
+
+        expect((await readTaskDependency(root, 'dependent')).blockers[0]?.reason).toBe('legacy_undetermined');
+
+        // The migration the road names, executed: re-stating the same edge on the current graph mints its id.
+        await addKataRelation({ root, from: { type: 'task', id: 'dependent' }, to: { type: 'task', id: 'corrective' }, type: 'blocked_by', reason: 'migrated' });
+        const graph = await readKataRelations(root);
+        expect(graph.version).toBe(2);
+        const edge = graph.relations.find((relation) => relation.from.id === 'dependent');
+        expect(typeof edge?.id).toBe('string');
+
+        // And the machinery can now answer the dependency: the ordinary "certified but no return recorded" state, whose road
+        // is the command that records one.
+        const migrated = await readTaskDependency(root, 'dependent');
+        expect(migrated.state).toBe('pending');
+        expect(migrated.blockers[0]?.reason).toBe('return_not_recorded');
+        expect(migrated.blockers[0]?.road).toContain('kata-cli dependency record --change dependent --relation ');
+        // **The return now actually works**, which is the fact the legacy state exists to get to.
+        await recordDependencyReturn({ root, taskId: 'dependent', relationId: edge?.id as string });
+        expect((await readTaskDependency(root, 'dependent')).state).toBe('ready_to_revalidate');
+    });
+
+    it('says the edge exists but cannot be named, instead of saying no edge starts here', async () => {
+        const root = await legacyFixture('legacy-writer');
+        const refusal = await recordDependencyReturn({ root, taskId: 'dependent', relationId: 'rel-whatever' })
+            .then(() => 'RECORDED', (error: Error) => error.message);
+        expect(refusal).toContain('carries no relation id');
+        expect(refusal).toContain('kata-cli relations add --from task:dependent');
+        expect(refusal).not.toContain('No task-to-task blocking edge');
+    });
+
+    it('leaves an id-bearing edge alone, so the legacy rule is not a gate on current work', async () => {
+        const root = await fixture('current-edge');
+        const decision = await readTaskDependency(root, 'dependent');
+        expect(decision.state).toBe('pending');
+        expect(decision.blockers[0]?.reason).toBe('corrective_not_certified');
     });
 });

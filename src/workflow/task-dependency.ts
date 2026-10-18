@@ -175,9 +175,22 @@ function certifierRoad(taskId: string): string {
 }
 
 function recordRoad(taskId: string, edge: DependencyEdge): string | null {
+    // An id-less edge never reaches a `return_not_recorded` blocker (it is refused as `legacy_undetermined` first), so this
+    // answers for id-bearing edges only and the migration road lives with the refusal that needs it.
     return edge.relationId === null
-        ? null
+        ? legacyEdgeRoad(taskId, edge)
         : `kata-cli dependency record --change ${taskId} --relation ${edge.relationId}`;
+}
+
+/**
+ * The migration an id-less edge needs, as a command that runs.
+ *
+ * Re-stating the same edge is the migration, not a workaround: `addKataRelation` replaces the edge it matches and mints the
+ * id inside its locked write, which is the write-side migration the reader deliberately refuses to perform. Measured: after
+ * running it the graph is version 2, the edge has an id, and the machinery answers the dependency normally.
+ */
+function legacyEdgeRoad(taskId: string, edge: DependencyEdge): string {
+    return `kata-cli relations add --from task:${taskId} --to task:${edge.correctiveTaskId} --type ${edge.relationType} --reason "<why this task depends on it>"`;
 }
 
 /**
@@ -222,6 +235,32 @@ export function decideTaskDependencies(input: {
     let everyEdgeRevalidated = true;
 
     for (const edge of edges) {
+        // **An edge written before ids existed is not a dependency this mechanism can answer, and that is asked first.**
+        //
+        // §6.5: *"旧 blocked_by 含义不明时标 legacy-undetermined，由 owner 迁移，不得默认已解决。"* Measured before this branch
+        // existed: a v1 `blocked_by` edge (no `id`, which is what every pre-id graph holds — the reader deliberately does not
+        // mint one) was reported as `pending`/`corrective_not_certified`, sending the operator to inspect the corrective task
+        // even when that task was perfectly certified. The truth is that no return can *ever* be recorded against such an edge,
+        // because a return is keyed by a relation id it does not have.
+        //
+        // It is asked **before every statement about the corrective task**, because none of those statements can be acted on
+        // through an edge that cannot be recorded against: "C has not returned", "C edits the certifier" and "C is certified
+        // but unrecorded" are all answers to a question this edge cannot carry. The state is `undetermined` rather than
+        // `pending` for the same reason — the remedy is the migration, and it is a command that exists: re-stating the edge on
+        // the current graph mints its id inside the writer's locked write, leaving an edge the machinery can answer.
+        if (edge.relationId === null) {
+            everyEdgeRevalidated = false;
+            blockers.push(blocker({
+                edge,
+                state: 'undetermined',
+                reason: 'legacy_undetermined',
+                detail: `The edge blocking this task on '${edge.correctiveTaskId}' carries no relation id, so its meaning cannot be `
+                    + `established: it was written before edges had ids, and no dependency return can be recorded against it. `
+                    + `It is not treated as unresolved work by '${edge.correctiveTaskId}'.`,
+                road: legacyEdgeRoad(taskId, edge),
+            }));
+            continue;
+        }
         const facts = correctiveById.get(edge.correctiveTaskId);
         if (!facts || facts.taskReadState === 'unreadable' || facts.revisionReadState === 'unreadable') {
             everyEdgeRevalidated = false;
@@ -288,17 +327,18 @@ export function decideTaskDependencies(input: {
             continue;
         }
 
-        const relationKey = edge.relationId;
-        const record = relationKey === null ? undefined : returnsByRelation.get(relationKey);
+        // **Only id-bearing edges reach here.** An id-less edge was refused above as `legacy_undetermined`, so this lookup can
+        // no longer miss for that reason — which is what makes the branch below a statement about work rather than about a
+        // record that can never exist.
+        const relationKey = edge.relationId as string;
+        const record = returnsByRelation.get(relationKey);
         if (!record) {
             everyEdgeRevalidated = false;
             blockers.push(blocker({
                 edge,
                 state: 'pending',
                 reason: 'return_not_recorded',
-                detail: relationKey === null
-                    ? `The edge blocking this task on '${edge.correctiveTaskId}' carries no relation id, so no return can be recorded for it; re-create the edge on a v2 graph.`
-                    : `The corrective task '${edge.correctiveTaskId}' is certified, but no return has been recorded against edge '${relationKey}'.`,
+                detail: `The corrective task '${edge.correctiveTaskId}' is certified, but no return has been recorded against edge '${relationKey}'.`,
                 road: recordRoad(taskId, edge),
             }));
             continue;
@@ -808,9 +848,15 @@ export async function recordDependencyReturn(input: {
     const { root, taskId, relationId } = input;
     assertValidTaskId(taskId);
     const graph = await readKataRelations(root);
-    const edge = dependencyEdgesFor(graph.relations, taskId).find((candidate) => candidate.relationId === relationId);
+    const edges = dependencyEdgesFor(graph.relations, taskId);
+    const edge = edges.find((candidate) => candidate.relationId === relationId);
     if (!edge) {
-        throw new Error(`No task-to-task blocking edge '${relationId}' starts at '${taskId}'; read them with \`kata-cli dependency status --change ${taskId}\`.`);
+        // **A legacy edge exists but has no id, and saying "no edge" about it is the misdirection this class is made of.**
+        const legacy = edges.find((candidate) => candidate.relationId === null);
+        throw new Error(legacy
+            ? `The edge blocking '${taskId}' on '${legacy.correctiveTaskId}' carries no relation id, so it cannot be named by one: it was `
+                + `written before edges had ids. Migrate it first, then record the return against the id that mints: ${legacyEdgeRoad(taskId, legacy)}`
+            : `No task-to-task blocking edge '${relationId}' starts at '${taskId}'; read them with \`kata-cli dependency status --change ${taskId}\`.`);
     }
     const facts = await readCorrectiveFacts(root, edge.correctiveTaskId);
     if (facts.revisionId === null || facts.revisionReadState !== 'current') {

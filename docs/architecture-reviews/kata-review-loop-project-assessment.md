@@ -635,3 +635,30 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **实测证据**：`tsc --noEmit` 退出 0；全量 **376 文件 / 2335 用例全绿**（本片新增 6 例）；`check:wiring` 既有 11 条不变。**反证（四处，各自独立）**：① 删掉决定分支里对 judge 身份的检查 → 行为用例转红；② 删掉 gate 里的依赖比较 → 该用例转红；③ 只删 judge 那半 → 另一用例转红；④ 把 D 的 revision 塞进身份（即设计禁止的“混为一个哈希”）会使既有 `bindsToRevision` 的“内容未变重封仍成立”语义反转，故未采用并已在代码注释中记录理由。**既有测试的两处更新（不是掩盖）**：两个 fixture 原来把“已 Judge”当成“已认证”、把 `revalidated` 当成“重封即算”，现在分别补上绑定的批准审查记录与点名当前依赖身份的 judge 记录——它们此前建模的是设计不接受的状态，注释已写明。
 
 **仍未实施**（第 20/24 节）：#5 `legacy-undetermined`、#10 §8.2 反馈分类、#11 PDSA 试点；#7 已实测并有条件建议不改。
+
+## 27. #5 已实施：id 缺失的旧边是具名 `legacy_undetermined`，不是“未完成的工作”（2026-10-18）
+
+设计 §6.5 原文：*“旧 blocked_by 含义不明时标 `legacy-undetermined`，由 owner 迁移，不得默认已解决。”*
+
+**先复现（真实 fixture，未改代码）**：手写一份 v1 关系图（`version: 1`，边无 `id`——这正是 reader 有意不补 id 的状态）：
+
+| 观察 | 结果 |
+|---|---|
+| 读到的边 | `version 1`，`edge.id === undefined` |
+| 判定 | `pending` / `corrective_not_certified`，detail 说**纠正行动还没有被接受的 revision**，road 指向 `kata-cli status --change corrective` |
+| 记录返回 | `No task-to-task blocking edge 'rel-anything' starts at 'dependent'` —— 而这条边**根本没有 id 可填**，所以返回永远无法记录 |
+| 迁移是否可行 | **可行**：对同一条边再跑一次 `relations add` → 图变成 `version 2`，边获得 `edge-cd8d9fb1a5a54e2b`，之后机制正常作答 |
+
+也就是说：一条含义无法建立的旧边，把操作者**指向了另一个任务**（去检查一个可能完全合规的 C），并且拒绝信息里的补救建议（“re-create the edge on a v2 graph”）**没有给出命令**。
+
+**实现**（`src/workflow/task-dependency.ts`）：
+
+- 该分支**排在对纠正行动的一切陈述之前**：`C 还没返回` / `C 改了认证器` / `C 已认证但无返回记录` 都是这条边**承载不了的问题的答案**——返回是按 relation id 索引的，而它没有 id。
+- 状态 `undetermined`（不是 `pending`），reason **`legacy_undetermined`**，detail 明确写出“**不把它当作 'C' 的未完成工作**”。
+- road 是**可执行的迁移命令**：`kata-cli relations add --from task:<D> --to task:<C> --type blocked_by --reason "<why>"`。再陈述同一条边就是迁移本身（`addKataRelation` 在它的锁内替换该边并铸 id），这也是 reader 有意不做的写侧迁移。
+- 写入侧同样不再误导：`recordDependencyReturn` 在“边存在但没有 id”时给出迁移命令，而不是说“没有边从该任务出发”。
+- 顺带删掉一处**不可达分支**：`return_not_recorded` 里原先的 `relationKey === null` 情况现在永远走不到（旧边已提前拒绝），按仓库自己的“删除后仍绿的守卫是装饰”规则移除。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **376 文件 / 2339 用例全绿**（本片新增 4 例）；`check:wiring` 既有 11 条不变。**反证**：关掉该分支 → 2 条用例转红（状态退回 `pending`、迁移后仍无法记录返回）。**端到端**：按打印的 road 迁移 → 图变 v2、边获得 id → 状态变成普通的 `pending`/`return_not_recorded`（road 为 `dependency record`）→ **执行该 road 后状态到 `ready_to_revalidate`**（即“返回真的能记录了”，这正是旧边状态存在的意义）。
+
+**剩余**：#10 §8.2 的 finding 反馈分类、#11 PDSA 试点；#7 已实测并有条件建议不改。
