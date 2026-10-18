@@ -529,7 +529,7 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 
 **实测证据**：`tsc --noEmit` 退出 0；全量 **374 文件 / 2318 用例全绿**；`check:wiring` 既有 11 条不变。**反证**：把该字段从构造处删掉，`review-request-is-handed-over.test.ts` 的新用例立刻转红，恢复即绿。用例同时断言：无边时字段缺席、有边时 `state === 'pending'`、reason 就是门禁拒绝时用的那个词（`corrective_not_certified`）、road 指向那个 C、且 `entries.seal/judge` 不是 `permitted`。
 
-**下一批候选**（仍未实施，按第 20 节）：#4（C 若改动认证器/reviewer 入口 → 批准资格 `undetermined`）、#6（blocked 原因/年龄）、#5（`legacy-undetermined`）、#1（`dependencyIdentity` 绑定进 D 的结论）、#8/#9/#10/#11。
+**下一批候选**（当时仍未实施，按第 20 节）：#4（C 若改动认证器/reviewer 入口 → 批准资格 `undetermined`）、#6（blocked 原因/年龄）、#5（`legacy-undetermined`）、#1（`dependencyIdentity` 绑定进 D 的结论）、#8/#9/#10/#11。**这些条目其后全部实施**：逐条见 §24（#4）、§25（#8）、§26（#1 与 #9）、§27（#5）、§28（#10）；只剩 #11 的试点需要真实使用数据。
 
 ## 23. 审计后的第三批：#6 已实施，#4 需要一次设计决定（2026-10-18）
 
@@ -589,7 +589,7 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 
 **过程中被仓库自己的守卫抓到一次**：清单最初写了渲染后的 reviewer 入口路径（含平台名），`platform-coupling-is-measured` 立刻报“adapter 变更半径变大”。改成写**源文件**（`src/adapters/manifest.ts`）——更正确，因为渲染产物由 `kata-cli update` 生成，改它本来就该改源。
 
-**仍未实施**（第 20 节）：#1 `dependencyIdentity`、#5 `legacy-undetermined`、#8 跨记录“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。
+**仍未实施**（第 20 节，截至本批）：#1 `dependencyIdentity`、#5 `legacy-undetermined`、#8 跨记录“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。**此处列出的前五项其后均已实施**：§25（#8）、§26（#1、#9）、§27（#5）、§28（#10）。
 
 ## 25. #8 已实施：混代读被拒绝而不是被回答（2026-10-18）
 
@@ -610,7 +610,7 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 
 **实测证据**：`tsc --noEmit` 退出 0；全量 **375 文件 / 2329 用例全绿**（本片新增 4 例）；`check:wiring` 既有 11 条不变。**反证**：把代比较关掉 → 恢复用例与拒绝对例同时转红（拒绝对例变得不可达），恢复即绿。**确定性**：竞态用 `vi.mock` 包裹真实的 `readKataRelations`（仓库既有做法，如 `a-damaged-gate-record-is-not-an-absent-one`），只推进它报告的 `updatedAt`，边仍来自真实 fixture——所以断言针对的是代检查本身，不是合成图。
 
-**仍未实施**（第 20/24 节）：#1 `dependencyIdentity`（**需要受保护 schema 变更授权**：`schemas/review.schema.json` 与 `schemas/judge-result.schema.json` 都是 `additionalProperties: false`，把依赖身份写进裁定记录必须改这两个文件）、#5 `legacy-undetermined`、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。
+**仍未实施**（第 20/24 节，截至本批）：#1 `dependencyIdentity`（**需要受保护 schema 变更授权**：`schemas/review.schema.json` 与 `schemas/judge-result.schema.json` 都是 `additionalProperties: false`，把依赖身份写进裁定记录必须改这两个文件）、#5 `legacy-undetermined`、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。**其中 #1/#9 见 §26，#5 见 §27，#10 见 §28**（schema 授权当时已给出）。
 
 ## 26. #1 已实施（受保护 schema 已获授权）：依赖身份与内容身份分离（2026-10-18）
 
@@ -634,7 +634,7 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 
 **实测证据**：`tsc --noEmit` 退出 0；全量 **376 文件 / 2335 用例全绿**（本片新增 6 例）；`check:wiring` 既有 11 条不变。**反证（四处，各自独立）**：① 删掉决定分支里对 judge 身份的检查 → 行为用例转红；② 删掉 gate 里的依赖比较 → 该用例转红；③ 只删 judge 那半 → 另一用例转红；④ 把 D 的 revision 塞进身份（即设计禁止的“混为一个哈希”）会使既有 `bindsToRevision` 的“内容未变重封仍成立”语义反转，故未采用并已在代码注释中记录理由。**既有测试的两处更新（不是掩盖）**：两个 fixture 原来把“已 Judge”当成“已认证”、把 `revalidated` 当成“重封即算”，现在分别补上绑定的批准审查记录与点名当前依赖身份的 judge 记录——它们此前建模的是设计不接受的状态，注释已写明。
 
-**仍未实施**（第 20/24 节）：#5 `legacy-undetermined`、#10 §8.2 反馈分类、#11 PDSA 试点；#7 已实测并有条件建议不改。
+**仍未实施**：#11 PDSA 试点（需要真实使用数据，不是代码工作）；#7 已实测并有条件建议不改。第 20 节审计表里的 #1–#6、#8–#10 均已由 §25–§28 的实施取代；该表保留为**当时的审计快照**，条目本身不再是缺口清单。
 
 ## 27. #5 已实施：id 缺失的旧边是具名 `legacy_undetermined`，不是“未完成的工作”（2026-10-18）
 
