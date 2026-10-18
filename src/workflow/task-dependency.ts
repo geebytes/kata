@@ -338,8 +338,23 @@ export function dependencyEntryReport(decision: TaskDependencyDecision): Record<
     }));
 }
 
+/**
+ * **The published shape of the decision — one type, because there is more than one publisher now.**
+ *
+ * `status` and the review request both hand this to a reader, and a second shape for the same fact is how two surfaces come
+ * to describe one dependency differently. The type is the contract; the function is the only producer.
+ */
+export interface TaskDependencySummary {
+    state: string;
+    taskId: string;
+    /** What each governed entry would answer, so a summary can never say "nothing blocks" beside a gate that refuses. */
+    entries: Record<string, 'permitted' | { refused: string; road: string | null }>;
+    edges: Array<{ relationId: string | null; correctiveTaskId: string; relationType: string }>;
+    blockers: Array<{ relationId: string | null; correctiveTaskId: string; state: string; reason: string; detail: string; road: string | null }>;
+}
+
 /** A short, stable summary for the surfaces that publish rather than gate (`status`, the review request). */
-export function summarizeTaskDependency(decision: TaskDependencyDecision): Record<string, unknown> {
+export function summarizeTaskDependency(decision: TaskDependencyDecision): TaskDependencySummary {
     return {
         state: decision.state,
         taskId: decision.taskId,

@@ -38,6 +38,7 @@ import { readCurrentTaskRevisionState, readTaskRevision, revisionIsCurrent, revi
 import { ledgerTierForDeclaredPaths, tierOverrideFromPlan } from './verdict.js';
 import type { EvidenceType } from '../kernel/types.js';
 import { readTaskRelations } from '../core/relations.js';
+import { readTaskDependency, summarizeTaskDependency, type TaskDependencySummary } from '../workflow/task-dependency.js';
 import { readTask } from '../core/task.js';
 import { buildReviewPackage, type ReviewPackage } from '../quality/review-package.js';
 import { readAcceptanceAmendments, type AcceptanceAmendment } from '../quality/acceptance-amendment.js';
@@ -157,6 +158,18 @@ export type ReviewRequest = {
     classification?: ClassificationOnRequest;
     /** Facts delivered as a single machine-readable handoff so the reviewer does not re-derive relations, axes, declarations or falsifier coverage. */
     reviewPackage: ReviewPackage;
+    /**
+     * **The blocking dependency, as the one decision every gate asks — carried so the reviewer can see it.**
+     *
+     * A change can be certified only while its dependency permits it, and the round judging the certification was reading a
+     * brief that mentioned the edge (`reviewPackage.relations`) but never the *decision*: whether the corrective action has
+     * returned, what its certification state is, which entries it refuses, and the roads. That is the same snapshot `status`
+     * publishes and the gates consume, produced by the same reader (`readTaskDependency`) and summarised by the same function,
+     * so a round can check the certification it is being asked to accept against the fact that governs it.
+     *
+     * Absent when the change has no blocking edge, so no existing change's brief changes shape.
+     */
+    dependency?: TaskDependencySummary;
 };
 
 export type ClassificationOnRequest = TaskClassificationRecord | { unreadable: string };
@@ -390,6 +403,10 @@ export async function buildReviewRequest(input: {
 
     const taskRecord = await readTask(input.root, input.changeId);
     const taskRelations = await readTaskRelations(input.root, input.changeId);
+    // **The dependency decision, read once here and published as the same summary `status` prints.** A second derivation
+    // inside the round's own machinery is what the design forbids; and a brief that omits it would ask a reviewer to accept
+    // a certification whose precondition is invisible to them.
+    const dependencySummary = summarizeTaskDependency(await readTaskDependency(input.root, input.changeId));
     const reviewPackage = buildReviewPackage({
         task: taskRecord,
         relations: taskRelations.relations,
@@ -430,6 +447,9 @@ export async function buildReviewRequest(input: {
             ...(loopReplay === null ? {} : { loopReplay }),
             ...(recurrencePacket === null ? {} : { recurrencePacket }),
             classification: classificationOnRequest,
+            // Present only when an edge claims something: a change with no blocking edge publishes nothing, so no existing
+            // brief changes shape and no reader has to decide what an empty dependency means.
+            ...(dependencySummary.state === 'absent' ? {} : { dependency: dependencySummary }),
             reviewPackage,
             deadlineToolCalls: plan.discovery?.deadlineToolCalls ?? null,
             // Present only when something could not be read: an absent field means the brief describes a ledger that was

@@ -105,6 +105,51 @@ async function planned(): Promise<{ subjectRevision: string }> {
     return { subjectRevision };
 }
 
+/**
+ * **The dependency the certification is conditional on, carried into the brief.**
+ *
+ * §6.3 asks the parent-child reference to be mechanically generated into the round's reading surface. The brief already
+ * carried the raw edge (`reviewPackage.relations`); what it did not carry was the *decision* — whether the corrective
+ * action has returned, what it is waiting for, and which entries it refuses — so a reviewer asked to accept a certification
+ * could not see the fact that governs whether it may exist at all. The field is the same summary `status` prints, from the
+ * same reader, so the two surfaces cannot describe one dependency differently.
+ */
+describe('the blocking dependency travels with the brief', () => {
+    it('carries the decision when an edge claims something, and nothing when none does', async () => {
+        // `planned()` seals the fixture and leaves the root in the module-level variable the file's other cases use.
+        await planned();
+        const dir = root;
+        const plain = await buildReviewRequest({ root: dir, changeId });
+        expect(plain.ok).toBe(true);
+        // No edge: the field is absent, so an ordinary change's brief is byte-for-byte what it was.
+        expect(plain.ok && plain.request.dependency).toBeUndefined();
+
+        // Now the change depends on a corrective action that has not returned.
+        await createTask({ root: dir, id: 'the-corrective-action', title: 'c', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
+        await createTaskRevisionIfChanged({ root: dir, taskId: 'the-corrective-action', ownedPaths: ['src/a.ts'], checkIds: [] });
+        const { addKataRelation } = await import('../../src/core/relations.js');
+        await addKataRelation({
+            root: dir,
+            from: { type: 'task', id: changeId },
+            to: { type: 'task', id: 'the-corrective-action' },
+            type: 'blocked_by',
+            reason: 'the corrective action owns the mechanism this change depends on',
+        });
+
+        const built = await buildReviewRequest({ root: dir, changeId });
+        expect(built.ok).toBe(true);
+        if (!built.ok) return;
+        expect(built.request.dependency?.state).toBe('pending');
+        expect(built.request.dependency?.blockers[0]?.correctiveTaskId).toBe('the-corrective-action');
+        // The reason is the one the gate refuses with, and the road is the one the refusal prints — not a second vocabulary.
+        expect(built.request.dependency?.blockers[0]?.reason).toBe('corrective_not_certified');
+        expect(built.request.dependency?.blockers[0]?.road).toContain('the-corrective-action');
+        // And what each governed entry would answer, so a reviewer can see the certification it is asked about is refused.
+        expect(built.request.dependency?.entries.seal).not.toBe('permitted');
+        expect(built.request.dependency?.entries.judge).not.toBe('permitted');
+    });
+});
+
 describe('a review request is handed over and checked, rather than hoped for', () => {
     it('carries the plan, the deadline and the probes — and none of the assurance axis', async () => {
     await planned();

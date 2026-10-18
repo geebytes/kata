@@ -518,3 +518,15 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 #1 `dependencyIdentity`、#2 ReviewRequest 依赖引用、#4 认证器变更的 `undetermined`、#5 `legacy-undetermined`、#6 blocked 年龄、#8 跨记录写入的“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点，均**仍未实施**。
 
 本批已提交（未推送）。
+
+## 22. 审计后的第二批：#2 已实施（2026-10-18）
+
+**#2（§6.3 父子关系的引用须机械生成并纳入 reviewer 的阅读面）已实施。**
+
+简报此前只带**原始边**（`reviewPackage.relations`：type/target/reason/createdAt），不带**决策**：C 是否已返回、卡在哪一步、哪些准入被拒、走哪条路。于是被要求接受一次认证的 reviewer，看不到决定这次认证能否存在的事实。
+
+**实现**：`buildReviewRequest` 在构造时读一次 `readTaskDependency`，用 `summarizeTaskDependency`（status 打印的同一个函数）写入 `request.dependency`。为了让两个发布面不可能描述同一个依赖为两种样子，`summarizeTaskDependency` 的返回从 `Record<string, unknown>` 收成一个具名类型 `TaskDependencySummary`，请求字段直接引用该类型（**不是** `as` 断言——本仓库的 `no-type-escapes-in-source` 守卫会拒绝）。无依赖边时字段**缺席**，既有 change 的简报形状不变。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **374 文件 / 2318 用例全绿**；`check:wiring` 既有 11 条不变。**反证**：把该字段从构造处删掉，`review-request-is-handed-over.test.ts` 的新用例立刻转红，恢复即绿。用例同时断言：无边时字段缺席、有边时 `state === 'pending'`、reason 就是门禁拒绝时用的那个词（`corrective_not_certified`）、road 指向那个 C、且 `entries.seal/judge` 不是 `permitted`。
+
+**下一批候选**（仍未实施，按第 20 节）：#4（C 若改动认证器/reviewer 入口 → 批准资格 `undetermined`）、#6（blocked 原因/年龄）、#5（`legacy-undetermined`）、#1（`dependencyIdentity` 绑定进 D 的结论）、#8/#9/#10/#11。
