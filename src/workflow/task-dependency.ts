@@ -445,18 +445,57 @@ export function dependencyEdgesFor(relations: readonly KataRelationWithLegacyId[
 }
 
 export type DependencyReturnsRead =
-    | { kind: 'absent'; returns: DependencyReturn[] }
-    | { kind: 'usable'; returns: DependencyReturn[] }
+    | { kind: 'absent'; returns: DependencyReturn[]; updatedAt: null }
+    | { kind: 'usable'; returns: DependencyReturn[]; updatedAt: string | null }
     | { kind: 'unreadable'; detail: string };
 
 export async function readDependencyReturns(root: string, taskId: string): Promise<DependencyReturnsRead> {
     try {
-        const record = await readValidatedOptional<{ returns: DependencyReturn[] }>('task-dependency', dependenciesPath(root, taskId));
-        if (record === null) return { kind: 'absent', returns: [] };
-        return { kind: 'usable', returns: record.returns };
+        const record = await readValidatedOptional<{ returns: DependencyReturn[]; updatedAt?: string }>('task-dependency', dependenciesPath(root, taskId));
+        if (record === null) return { kind: 'absent', returns: [], updatedAt: null };
+        // The record's own `updatedAt` travels with the returns: it is the generation this read saw, and a decision assembled
+        // from a record that was rewritten underneath it is a decision about a state that never existed.
+        return { kind: 'usable', returns: record.returns, updatedAt: record.updatedAt ?? null };
     } catch (error) {
         return { kind: 'unreadable', detail: error instanceof Error ? error.message : String(error) };
     }
+}
+
+/**
+ * **The generations a dependency answer is assembled from, read as one snapshot.**
+ *
+ * The design asks for a rejection or recovery strategy for a mixed-generation read (§6.2: *"涉及 task 锁与 repo 关系图锁的
+ * 跨记录写入须有确定顺序、可重试的幂等步骤和混代读的拒绝/恢复策略；不要假定两次独立写入天然原子"*). A dependency answer is
+ * assembled from **four** files that are written by different writers under different locks — the relation graph, the return
+ * record, the corrective task's revision pointer and this task's own — so an answer read across them describes a state no
+ * moment in time ever held. Every field here is a value the answer already used, so the check costs one extra read of each
+ * and cannot drift from the answer it guards.
+ */
+export type DependencyGeneration = {
+    graphUpdatedAt: string;
+    returnsUpdatedAt: string | null;
+    subjectRevisionId: string | null;
+    correctiveRevisionIds: Record<string, string | null>;
+};
+
+/** Which generations moved between two snapshots, named so the refusal can say what changed under it. */
+export function movedGenerations(before: DependencyGeneration, after: DependencyGeneration): string[] {
+    const moved: string[] = [];
+    if (before.graphUpdatedAt !== after.graphUpdatedAt) {
+        moved.push(`the relation graph (updatedAt ${before.graphUpdatedAt} -> ${after.graphUpdatedAt})`);
+    }
+    if (before.returnsUpdatedAt !== after.returnsUpdatedAt) {
+        moved.push(`the dependency return record (updatedAt ${before.returnsUpdatedAt ?? '<none>'} -> ${after.returnsUpdatedAt ?? '<none>'})`);
+    }
+    if (before.subjectRevisionId !== after.subjectRevisionId) {
+        moved.push(`this task's own revision (${before.subjectRevisionId ?? '<none>'} -> ${after.subjectRevisionId ?? '<none>'})`);
+    }
+    for (const [correctiveTaskId, revisionId] of Object.entries(before.correctiveRevisionIds)) {
+        if (after.correctiveRevisionIds[correctiveTaskId] !== revisionId) {
+            moved.push(`the corrective task '${correctiveTaskId}' (revision ${revisionId ?? '<none>'} -> ${after.correctiveRevisionIds[correctiveTaskId] ?? '<none>'})`);
+        }
+    }
+    return moved;
 }
 
 async function readCorrectiveFacts(root: string, taskId: string): Promise<CorrectiveFacts> {
@@ -507,49 +546,117 @@ async function readCorrectiveFacts(root: string, taskId: string): Promise<Correc
     };
 }
 
+/**
+ * **How many times a read may be assembled before it is reported as unanswerable.**
+ *
+ * Two: one to read, one to recover from a writer that landed mid-read — the common case, and retrying it costs nothing.
+ * A third would be a spin, and a read that keeps losing the race is a fact worth reporting rather than hiding behind
+ * retries: `undetermined` refuses the same entries as `pending`, so the conservative answer is always available.
+ */
+const DEPENDENCY_READ_ATTEMPTS = 2;
+
 /** Read this task's dependency decision from the repository. The one reader every governed entry and `status` uses. */
 export async function readTaskDependency(root: string, taskId: string): Promise<TaskDependencyDecision> {
     assertValidTaskId(taskId);
-    const graph = await readKataRelations(root);
-    const edges = dependencyEdgesFor(graph.relations, taskId);
-    const subject = await readCurrentTaskRevisionState(root, taskId);
-    const subjectRevisionId = subject.kind === 'current' ? subject.revision.id : null;
-    if (edges.length === 0) {
-        return { taskId, state: 'absent', edges: [], blockers: [], subjectRevisionId };
-    }
+    let lastEdges: DependencyEdge[] = [];
+    let lastSubjectRevisionId: string | null = null;
+    let lastMoved: string[] = [];
 
-    // **A return record that cannot be read is `unreadable`, not empty.** Reading it as "no returns" would turn a damaged
-    // record into a pending dependency that looks like the ordinary unfinished case, and an operator would act on the
-    // wrong story. The read state is carried into the decision by treating every edge as unanswerable.
-    const returnsRead = await readDependencyReturns(root, taskId);
-    if (returnsRead.kind === 'unreadable') {
-        return {
-            taskId,
-            state: 'undetermined',
-            edges,
-            blockers: edges.map((edge) => blocker({
-                edge,
+    for (let attempt = 1; attempt <= DEPENDENCY_READ_ATTEMPTS; attempt += 1) {
+        const graph = await readKataRelations(root);
+        const edges = dependencyEdgesFor(graph.relations, taskId);
+        const subject = await readCurrentTaskRevisionState(root, taskId);
+        const subjectRevisionId = subject.kind === 'current' ? subject.revision.id : null;
+        lastEdges = edges;
+        lastSubjectRevisionId = subjectRevisionId;
+        // No edge claims anything: there is nothing for a mixed-generation read to mix, so this returns without the extra
+        // reads — and an edge-less task stays exactly as cheap as it was.
+        if (edges.length === 0) {
+            return { taskId, state: 'absent', edges: [], blockers: [], subjectRevisionId };
+        }
+
+        // **A return record that cannot be read is `unreadable`, not empty.** Reading it as "no returns" would turn a damaged
+        // record into a pending dependency that looks like the ordinary unfinished case, and an operator would act on the
+        // wrong story. The read state is carried into the decision by treating every edge as unanswerable.
+        const returnsRead = await readDependencyReturns(root, taskId);
+        if (returnsRead.kind === 'unreadable') {
+            return {
+                taskId,
                 state: 'undetermined',
-                reason: 'return_record_unreadable',
-                detail: `The dependency return record could not be read (${returnsRead.detail}), so no return can be trusted.`,
-                road: `kata-cli dependency status --change ${taskId}`,
-            })),
+                edges,
+                blockers: edges.map((edge) => blocker({
+                    edge,
+                    state: 'undetermined',
+                    reason: 'return_record_unreadable',
+                    detail: `The dependency return record could not be read (${returnsRead.detail}), so no return can be trusted.`,
+                    road: `kata-cli dependency status --change ${taskId}`,
+                })),
+                subjectRevisionId,
+            };
+        }
+
+        const corrective: CorrectiveFacts[] = [];
+        for (const edge of edges) {
+            corrective.push(await readCorrectiveFacts(root, edge.correctiveTaskId));
+        }
+
+        // **The generations, compared before the answer is used.** The values here are the ones the answer already read —
+        // the graph's `updatedAt` from the read that produced the edges, the return record's from its own read, the revision
+        // pointers from the facts — so this cannot disagree with what was decided; it can only say whether it still holds.
+        const before: DependencyGeneration = {
+            graphUpdatedAt: graph.updatedAt,
+            returnsUpdatedAt: returnsRead.updatedAt,
             subjectRevisionId,
+            correctiveRevisionIds: Object.fromEntries(corrective.map((facts) => [facts.taskId, facts.revisionId])),
         };
+        const after = await readDependencyGeneration(root, taskId, edges.map((edge) => edge.correctiveTaskId));
+        const moved = movedGenerations(before, after);
+        if (moved.length === 0) {
+            return decideTaskDependencies({
+                taskId,
+                edges,
+                corrective,
+                returns: returnsRead.returns,
+                subjectRevisionId,
+            });
+        }
+        lastMoved = moved;
     }
 
-    const corrective: CorrectiveFacts[] = [];
-    for (const edge of edges) {
-        corrective.push(await readCorrectiveFacts(root, edge.correctiveTaskId));
-    }
-
-    return decideTaskDependencies({
+    // **A read that keeps losing the race is reported, not answered.** `undetermined` is the design's state for "the facts
+    // could not be established", and it refuses exactly what `pending` refuses — so the conservative answer is the honest
+    // one, and the operator's road is to ask again once the writers have stopped.
+    return {
         taskId,
-        edges,
-        corrective,
-        returns: returnsRead.returns,
-        subjectRevisionId,
-    });
+        state: 'undetermined',
+        edges: lastEdges,
+        blockers: lastEdges.map((edge) => blocker({
+            edge,
+            state: 'undetermined',
+            reason: 'records_moved_while_reading',
+            detail: `This dependency could not be read as one state: ${lastMoved.join('; ')} changed while it was being read, twice.`,
+            road: `kata-cli dependency status --change ${taskId}`,
+        })),
+        subjectRevisionId: lastSubjectRevisionId,
+    };
+}
+
+/** Re-read just the generations, without re-reading the facts they guard. */
+async function readDependencyGeneration(root: string, taskId: string, correctiveTaskIds: readonly string[]): Promise<DependencyGeneration> {
+    const graph = await readKataRelations(root);
+    const returnsRead = await readDependencyReturns(root, taskId);
+    const subject = await readCurrentTaskRevisionState(root, taskId);
+    const correctiveRevisionIds: Record<string, string | null> = {};
+    for (const correctiveTaskId of correctiveTaskIds) {
+        const revisionRead = await readCurrentTaskRevisionState(root, correctiveTaskId);
+        correctiveRevisionIds[correctiveTaskId] = revisionRead.kind === 'current' ? revisionRead.revision.id : null;
+    }
+    return {
+        graphUpdatedAt: graph.updatedAt,
+        returnsUpdatedAt: returnsRead.kind === 'unreadable' ? null : returnsRead.updatedAt,
+        subjectRevisionId: subject.kind === 'current' ? subject.revision.id : null,
+        correctiveRevisionIds,
+    };
 }
 
 /**

@@ -590,3 +590,24 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **过程中被仓库自己的守卫抓到一次**：清单最初写了渲染后的 reviewer 入口路径（含平台名），`platform-coupling-is-measured` 立刻报“adapter 变更半径变大”。改成写**源文件**（`src/adapters/manifest.ts`）——更正确，因为渲染产物由 `kata-cli update` 生成，改它本来就该改源。
 
 **仍未实施**（第 20 节）：#1 `dependencyIdentity`、#5 `legacy-undetermined`、#8 跨记录“代/混代读”、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。
+
+## 25. #8 已实施：混代读被拒绝而不是被回答（2026-10-18）
+
+设计 §6.2 原文要求：*“涉及 task 锁与 repo 关系图锁的跨记录写入须有确定顺序、可重试的幂等步骤和**混代读的拒绝/恢复策略**；不要假定两次独立写入天然原子。”*
+
+**问题（实测的结构事实）**：一次依赖判定由**四个文件**拼成——关系图、返回记录、C 的 revision 指针、D 自己的 revision 指针——它们由**不同的写入者、不同的锁**改写。因此“读到”的答案可能描述一个**从未存在过的瞬间**：例如读到旧边集 + 新的返回记录，或读到 C 的旧 revision + 新的图。而这份答案是**门禁、status、review 简报**共同使用的那一份。
+
+**实现**（`src/workflow/task-dependency.ts`）：
+
+| 事实 | 做法 |
+|---|---|
+| 快照的“代” | 每个字段都是**答案本来就用到的值**：图的 `updatedAt`（产生边的那次读）、返回记录的 `updatedAt`（随 returns 一起读出）、D 自己的 revision id、每个 C 的 revision id。所以这个检查不可能与它所守护的答案不一致——它只能说明答案是否仍然成立 |
+| 恢复 | **有界重试 2 次**：第二次重读全部输入。常规竞态一次就能恢复，且对操作者不可见 |
+| 拒绝 | 两次都输掉竞态 → `undetermined`，reason `records_moved_while_reading`，detail **点名是谁动了**（图 / 返回记录 / D 的 revision / 某个 C 的 revision），road 是真实命令 `kata-cli dependency status --change <id>`。`undetermined` 拒绝的准入与 `pending` 相同，所以保守答案永远可得，不需要“猜一个” |
+| 不额外收费的路径 | **无边任务只读一次图就返回 `absent`**（有断言：`readKataRelations` 调用次数 == 1）——没有状态可混的地方不付这个代价 |
+
+**写入侧的处置（不是新机制，是记录事实）**：返回记录与图**各有自己的锁**，所以“先记录返回、图随后被改写”这类次序是可能的。它由既有规则消化：返回记录的 C revision 与当前不符 → 既有 `undetermined`（“the corrective work moved after the return”）；返回记录所指向的边已不存在 → 判定只遍历边，那条返回**永不被查询**（`returnsByRelation` 由边驱动）。因此不需要在锁内重做一遍校验，也不需要第三个存储。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **375 文件 / 2329 用例全绿**（本片新增 4 例）；`check:wiring` 既有 11 条不变。**反证**：把代比较关掉 → 恢复用例与拒绝对例同时转红（拒绝对例变得不可达），恢复即绿。**确定性**：竞态用 `vi.mock` 包裹真实的 `readKataRelations`（仓库既有做法，如 `a-damaged-gate-record-is-not-an-absent-one`），只推进它报告的 `updatedAt`，边仍来自真实 fixture——所以断言针对的是代检查本身，不是合成图。
+
+**仍未实施**（第 20/24 节）：#1 `dependencyIdentity`（**需要受保护 schema 变更授权**：`schemas/review.schema.json` 与 `schemas/judge-result.schema.json` 都是 `additionalProperties: false`，把依赖身份写进裁定记录必须改这两个文件）、#5 `legacy-undetermined`、#9 新 schema 版本读取策略、#10 §8.2 反馈分类、#11 试点。
