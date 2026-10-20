@@ -729,3 +729,17 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **实测证据**：`tsc --noEmit` 退出 0；全量 **381 文件 / 2352 用例全绿**；`check:wiring` 既有 11 条不变。
 
 **缺口清单到此清零**：#1–#11 全部实施；#7 已实测并按记录缺口保留（有守卫用例与已验证的容器性质）。
+
+## 31. #9 的完整答复：三条新记录的读取策略（2026-10-18）
+
+#9（“受控 schema 新增须确认有效版本读取策略”）此前只在 §26 回答了**两个受保护字段**。三条新记录的策略在这里，且是**已实现并被引用到行**的，不是承诺：
+
+| 记录 | schema | 读取 | 损坏时 |
+|---|---|---|---|
+| `task-dependency.json` | `schemas/task-dependency.schema.json` | `readDependencyReturns` 三态 | `return_record_unreadable` → 决策 `undetermined`，拒绝五个入口（`src/workflow/task-dependency.ts:721`） |
+| `task-completion.json` | `schemas/task-completion.schema.json` | `readCompletionRecord` 三态 | `completion_record_unreadable` → **不**报“等待集成”（`src/workflow/completion.ts:121`） |
+| `corrective-action.json` | `schemas/corrective-action.schema.json` | `readCorrectiveAction` 三态 | 读取方报 `unreadable`；class 视图把它列进 `unreadable[]` 而不是当作“没有声明”（`src/workflow/corrective-action.ts:56`、`src/workflow/metrics.ts`） |
+
+**为什么不需要字段级版本号**：三者都是**任务范围内整份重写**的记录，不是跨版本累积的历史；仓库既有的版本策略（`READABLE_*` 词表 + 三态读取 + “不可读绝不等于不存在”）已经覆盖了“旧记录仍可读”的要求。两个**受保护** schema 里的 `dependencyIdentity` 走的是另一条：字段**可选**，缺失读作“未绑定”（保守方向），因此旧裁定记录照常可读而不会被当成“无依赖所以没问题”。
+
+**一处已知的、方向安全的折叠**：`task-dependency.ts:744` 把 judge 记录的读取失败折叠成 `null`，再交给 `speaksForDependency` —— 结果是**拒绝**（闭合），所以它是安全的，但它确实是一处“损坏读作缺失”。记录在此而不是留作隐性：若要严格遵循 `corrupt-read-as-absent` 的规则，应改为三态并给出具名 reason（代价：一个只在罕见情况下出现的 state）。我**没有**改，因为改动会增加一个状态而没有更强的保证；如果下一轮认为这是缺陷，正确的修法是把它并入既有 `undetermined`，而不是新增状态。
