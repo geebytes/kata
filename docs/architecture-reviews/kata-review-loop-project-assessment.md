@@ -706,3 +706,26 @@ reviewer 可报告焦点之外发现的严重问题，但要写清它与当前 D
 **过程中的自我纠错记录（三处，都已修）**：① 第一版探针没跑 `design`，读到的“指针不前进”是阶段拒绝的假象；② 第一版守卫 fixture 把证据文件命名成 `e1.json`，而记录器只读 `<taskId>-*.json`，于是“没有证据”也是假象（这个坑与我此前在 §14 记的“打印的 road 不成立”同类：**读不到**被当成了**不存在**）；③ `revisions/` 目录里的条目带 `.json` 后缀，第一版断言漏了后缀。
 
 **实测证据**：`tsc --noEmit` 退出 0；全量 **380 文件 / 2350 用例全绿**（本片新增 2 例）；`check:wiring` 既有 11 条不变。
+
+## 30. #11 已实施：PDSA 试点跑完，采纳；并修掉试点暴露的一个死胡同（2026-10-18）
+
+设计 §7 步骤 1 要求“**先写预测与否决条件，再跑**”，因此预测先写在用例里（`tests/unit/the-delivery-and-corrective-pilot.test.ts` 的文件头），断言在其后，结果是跑出来的：
+
+| 预测 | 结果 |
+|---|---|
+| **P1** 纠正行动未返回时，交付切片的**每个**受管入口都拒绝，且信息点名 C | **成立**（模块层与真实 CLI 都测了；CLI 层的拒绝序列见下） |
+| **P2** 记录返回要求 C **自己的**认证：Judge PASS **且**绑定其 revision 的独立审查批准；只有 PASS 会被拒 | **成立**——只有 Judge PASS 时被拒且信息给出 `kata-cli review`；补上绑定批准后同一次写入成功 |
+| **P3** 返回之后，`judge`/`archive` 仍关闭，直到 D **在返回的依赖下重新认证**（重新封版不算） | **成立**——重封后状态仍是 `ready_to_revalidate`，reason `revalidated_under_an_older_dependency`；judge 记录点名新依赖身份后才 `revalidated` |
+| **P4** 依赖未返回时 `completion` 永不报已交付；没记录目标集成之前也不算 | **成立**——认证后是 `approved_awaiting_integration`，集成后是 `archive_not_reached`，归档后才是 `delivered_and_archived` |
+| **P5** 一个未解除 class，把 D 记为受影响的 change，C 认证后解除 | **成立**——`corrective status` 报 discharged；`metrics` 的 class 视图把 `dependentTasks` 列为 `[pilot-delivery]`，`roundsAfterDeclaration` 为 0 |
+| **P6** 机制自己要求的成本是：C 一次认证 + D 一次重新认证，不多开一轮 | **预测错在有利方向**：D 只花**一次** seal——被依赖门拒绝的那次**根本没铸 revision**，所以不存在“先付一次垃圾 seal 再重封”。用例按实测断言（C=1、D=1），并把错误预测保留在注释里而不是改写它 |
+
+**裁决：采纳（adopt）。** P1–P5 成立，P6 的偏差是机制比预测更好；没有否决条件被触发。
+
+**试点在真实 CLI（重建后的 `dist/cli.js`）上暴露的死胡同，已修复**：`build --seal` 的信任边界拒绝原先只印一句 `implementation_gate requires an explicit user choice before continuing.`——**不给命令**，而 `gate approve` 的旗标是 `--task`（其它命令都是 `--change`）。修法是把命令与**词汇**（取自写入端校验的同一个 `USER_CHOICES`）写进拒绝里；永久用例在 `tests/unit/gate-refusal-names-the-remedy.test.ts`（断言命令、旗标拼写、词汇，并断言该 road 能跑通）。修复后实测的拒绝链每一跳都可执行：`build --seal` → 边界拒绝（给出 `gate approve …`）→ 记录人类选择并继续 → 依赖拒绝（给出 `status --change dc-corrective`）→ 该命令正常输出 C 的状态。
+
+**试点的诚实边界**：CLI 侧走到 C 的封版时被**handoff 确认**拦住（`Workflow mutation requires a current acknowledged handoff receipt …`，信息本身给了可执行 road）。这是治理流程的要求，不是本次机制的缺陷；因此 CLI 证据止于“拒绝链可执行”，**完整生命周期由模块层用例（驱动 CLI 调用的同一批 `runCommand` 入口）覆盖**。成本（wall-clock/token）本试点**测不出**——`metrics` 才是成本读面。
+
+**实测证据**：`tsc --noEmit` 退出 0；全量 **381 文件 / 2352 用例全绿**；`check:wiring` 既有 11 条不变。
+
+**缺口清单到此清零**：#1–#11 全部实施；#7 已实测并按记录缺口保留（有守卫用例与已验证的容器性质）。

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { approveUserChoiceGate } from '../../src/workflow/user-choice-gate.js';
+import { approveUserChoiceGate, requireUserChoiceGate, USER_CHOICES } from '../../src/workflow/user-choice-gate.js';
 import { gateFixture, type GateFixture } from '../helpers/gate-fixture.js';
 
 /**
@@ -41,5 +41,31 @@ describe('a refusal names the next step', () => {
         // the step after it, and naming the creating command here would send the operator to a command that cannot help.
         expect(String(refusal)).toContain('kata-cli review');
         expect(String(refusal)).not.toContain('recreates this boundary');
+    });
+
+    it('names the command that answers a boundary nobody has answered, and the command it names runs', async () => {
+        // **Measured while running the delivery/corrective pilot through the real CLI.** `build --seal` answered
+        // `implementation_gate requires an explicit user choice before continuing.` and stopped: no command, no flag spelling,
+        // no vocabulary — while every other command spells the task `--change` and `gate approve` spells it `--task`. The
+        // operator was left to guess, and guessing wrong produced `kata gate approve requires --task, --boundary, and --choice`.
+        const refusal = await requireUserChoiceGate({ root: fixture.root, taskId: fixture.taskId, boundary: 'review_gate' })
+            .then(() => 'ADMITTED', (error: Error) => error.message);
+        expect(refusal).not.toBe('ADMITTED');
+        expect(refusal).toContain('requires an explicit user choice');
+
+        // The road, spelled the way the command that consumes it spells its flags.
+        const road = /`(kata-cli gate approve [^`]+)`/u.exec(refusal)?.[1];
+        expect(road, `the refusal must name the command: ${refusal}`).toBeDefined();
+        expect(road).toContain(`--task ${fixture.taskId}`);
+        expect(road).toContain('--boundary review_gate');
+        expect(road).toContain('--choice');
+        // And the vocabulary it offers is the one the writer validates against, so a reader cannot be sent to a value the
+        // schema refuses.
+        for (const choice of USER_CHOICES) expect(road).toContain(choice);
+
+        // The road runs: the same call with a choice from that vocabulary answers the boundary.
+        const answered = await approveUserChoiceGate({ root: fixture.root, taskId: fixture.taskId, boundary: 'review_gate', choice: 'continue_current' })
+            .then(() => 'ANSWERED', (error: Error) => `refused: ${error.message}`);
+        expect(answered).toBe('ANSWERED');
     });
 });

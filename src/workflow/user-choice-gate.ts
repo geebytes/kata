@@ -554,7 +554,16 @@ export async function requireUserChoiceGate(input: { root: string; taskId: strin
     await writeFile(pathFor(input.root, input.taskId, input.boundary), `${JSON.stringify(reused, null, 2)}\n`);
     return reused;
   }
-  throw new Error(`${input.boundary} requires an explicit user choice before continuing.`);
+  // **The refusal names the command, because a refusal without a road is a dead end.** Measured while running the D/C pilot
+  // through the real CLI: `build --seal` answered `implementation_gate requires an explicit user choice before continuing.`
+  // and stopped there — the operator was left to discover `kata-cli gate approve`, whose flag is `--task` while every other
+  // command in the vocabulary spells it `--change`. Both facts are in the sentence now, together with the choice vocabulary
+  // taken from the same constant the writer validates against, so a reader cannot be sent to a value the schema refuses.
+  throw new Error(
+    `${input.boundary} requires an explicit user choice before continuing. Record it with `
+    + `\`kata-cli gate approve --task ${input.taskId} --boundary ${input.boundary} --choice <${USER_CHOICES.join('|')}>\`, `
+    + `then re-run this command.`,
+  );
 }
 
 /**
